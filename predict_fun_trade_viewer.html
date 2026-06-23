@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Predict.fun 交易查看器 · 对手方 / 邀请人</title>
+<style>
+  :root{
+    --bg:#0e1117; --panel:#161b22; --panel2:#1c2230; --border:#2a3240;
+    --text:#e6edf3; --muted:#8b949e; --accent:#3b82f6; --green:#3fb950;
+    --red:#f85149; --yellow:#d29922; --purple:#a371f7; --mono:'SFMono-Regular',Consolas,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.5}
+  header{padding:18px 22px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,#11161f,#0e1117)}
+  header h1{margin:0;font-size:18px}
+  header p{margin:4px 0 0;color:var(--muted);font-size:12.5px}
+  .wrap{max-width:1280px;margin:0 auto;padding:20px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+  input,select{width:100%;padding:8px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:inherit}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
+  .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+  button{padding:9px 18px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer}
+  button:hover{filter:brightness(1.1)}
+  button.secondary{background:var(--panel2);border:1px solid var(--border)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .hint{font-size:11.5px;color:var(--muted);margin-top:4px}
+  details.adv{margin-top:6px}
+  details.adv summary{cursor:pointer;color:var(--accent);font-size:12.5px;user-select:none}
+  .mono{font-family:var(--mono)}
+  .addr{font-family:var(--mono);font-size:12px}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .stats{display:flex;gap:18px;flex-wrap:wrap;margin:6px 0 0}
+  .stat{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px 14px}
+  .stat b{font-size:18px;display:block}
+  .stat span{font-size:11px;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;position:sticky;top:0;background:var(--panel)}
+  tr:hover td{background:rgba(255,255,255,.02)}
+  .tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+  .tag.buy{background:rgba(63,185,80,.15);color:var(--green)}
+  .tag.sell{background:rgba(248,81,73,.15);color:var(--red)}
+  .tag.maker{background:rgba(163,113,247,.15);color:var(--purple)}
+  .tag.taker{background:rgba(59,130,246,.15);color:var(--accent)}
+  .tag.ref{background:rgba(210,153,34,.15);color:var(--yellow)}
+  .copy{cursor:pointer;color:var(--muted);font-size:11px;margin-left:4px}
+  .copy:hover{color:var(--text)}
+  #log{font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:pre-wrap;max-height:160px;overflow:auto}
+  .err{color:var(--red)}
+  .ok{color:var(--green)}
+  .pill{font-size:11px;color:var(--muted)}
+  .scroll{overflow:auto;max-height:65vh;border-radius:8px}
+  .empty{padding:30px;text-align:center;color:var(--muted)}
+  .legend{font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.7}
+  .legend code{background:var(--panel2);padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Predict.fun 交易查看器 — 对手方 &amp; 邀请人</h1>
+  <p>交易列表来自 OPinX / Predict.fun，链上 receipt 用 BSC API（Etherscan V2 · chainid=56）或 RPC 解析对手方与邀请人。</p>
+</header>
+
+<div class="wrap">
+
+  <!-- ============ 查询表单 ============ -->
+  <div class="card">
+    <div class="grid">
+      <div>
+        <label>钱包地址 Wallet</label>
+        <input id="wallet" placeholder="0xab929df893b7e6202539aae41c86afc7ab575821" />
+      </div>
+      <div>
+        <label>天数 Days</label>
+        <input id="days" type="number" value="1" min="1" max="90" />
+      </div>
+      <div>
+        <label>交易来源 Source</label>
+        <select id="source">
+          <option value="opinx">OPinX / predalpha（免 Key）</option>
+          <option value="predict">Predict.fun 官方 /v1/orders/matches</option>
+          <option value="bsc">BSC 直接扫链（仅需 BSC Key）</option>
+        </select>
+      </div>
+      <div>
+        <label>链上解析方式 Enrich</label>
+        <select id="enrich">
+          <option value="bscapi">BSC API（Etherscan V2）</option>
+          <option value="rpc">BSC RPC</option>
+          <option value="none">不解析（只看来源数据）</option>
+        </select>
+      </div>
+    </div>
+
+    <details class="adv" open>
+      <summary>API Key / 接口设置</summary>
+      <div class="grid" style="margin-top:10px">
+        <div>
+          <label>BSC API Key（Etherscan V2，识别对手方/邀请人需要）</label>
+          <input id="bscKey" placeholder="Etherscan V2 API Key" />
+          <div class="hint">默认接口 <code>https://api.etherscan.io/v2/api?chainid=56</code></div>
+        </div>
+        <div>
+          <label>BSC RPC URL（enrich 选 RPC 时使用）</label>
+          <input id="rpcUrl" placeholder="https://bsc-dataseed.bnbchain.org" />
+        </div>
+        <div>
+          <label>Predict.fun API Key（来源选官方时需要）</label>
+          <input id="predictKey" placeholder="x-api-key" />
+        </div>
+        <div>
+          <label>OPinX 接口前缀</label>
+          <input id="opinxBase" value="https://tool.opinx.app/api/predict/orders" />
+        </div>
+      </div>
+    </details>
+
+    <div class="row" style="margin-top:14px">
+      <button id="go">查询交易</button>
+      <button id="stop" class="secondary" disabled>停止</button>
+      <span id="status" class="pill"></span>
+    </div>
+  </div>
+
+  <!-- ============ 汇总 ============ -->
+  <div class="card" id="summaryCard" style="display:none">
+    <div class="stats" id="stats"></div>
+    <div class="legend">
+      <b>判定逻辑：</b>
+      <code>对手方</code> = 同一笔 tx 内所有 OrderFilled 的 maker/taker，剔除本钱包与 Exchange 撮合合约后剩下的真实地址。
+      <code>邀请人</code> = <code>ReferralFeeDistributed.referrer</code>；当同一笔 <code>FeeRefunded.to</code> 为本钱包且 <code>feeCharged&gt;0</code> 时标记为「本钱包相关」。
+      <code>净手续费</code> 取 <code>FeeRefunded.feeCharged</code>（退款后实际收取）。
+    </div>
+  </div>
+
+  <!-- ============ 结果表 ============ -->
+  <div class="card">
+    <div class="scroll">
+      <table id="resultTable">
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th>市场 / Token</th>
+            <th>角色</th>
+            <th>方向</th>
+            <th>稳定币 (USDT)</th>
+            <th>份额 Shares</th>
+            <th>均价</th>
+            <th>净手续费</th>
+            <th>对手方 Counterparty</th>
+            <th>邀请人 Referrer</th>
+            <th>Tx</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="11" class="empty">填入钱包地址后点击「查询交易」</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ============ 日志 ============ -->
+  <div class="card">
+    <label>运行日志</label>
+    <div id="log"></div>
+  </div>
+
+</div>
+
+<script>
+/* =====================================================================
+ * 常量：Predict.fun BNB Mainnet 合约 + 事件签名 topic0
+ * ===================================================================== */
+const USDT = "0x55d398326f99059ff775485246999027b3197955"; // BUSD-T / USDT (18 位)
+const EXCHANGES = new Set([
+  "0x6beb5a40c032afc305961162d8204cda16decfa5", // Yield Bearing CTFExchange
+  "0x8a289d458f5a134ba40015085a8f50ffb681b41d", // Yield Bearing NegRiskCtfExchange
+  "0x8bc070bedab741406f4b1eb65a72bee27894b689", // Non Yield Bearing CTFExchange
+  "0x365fb81bd4a24d6303cd2f19c349de6894d8d58a", // Non Yield Bearing NegRiskCtfExchange
+].map(x=>x.toLowerCase()));
+
+// 事件 topic0
+const T = {
+  TRANSFER:        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", // ERC20 Transfer(from,to,value)
+  ORDER_FILLED:    "0xd0a08e8c493f9c94f29311604c9de1b4e8c8d4c06bd0c789af57f2d65bfec0f6",
+  ORDERS_MATCHED:  "0x63bf4d16b7fa898ef4c4b2b6d90fd201e9c56313b65638af6088d149d2ce956c",
+  FEE_CHARGED:     "0xacffcc86834d0f1a64b0d5a675798deed6ff0bcfc2231edd3480e7288dba7ff4",
+  FEE_REFUNDED:    "0xb608d2bf25d8b4b744ba23ce2ea9802ea955e216c064a62f42152fbf98958d24",
+  REFERRAL:        "0x49ac620b558864688b463a3f134957b7c79395240bcc59985d0fbd40236cd0e3",
+  TRANSFER_SINGLE: "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62",
+};
+const ETHERSCAN_V2 = "https://api.etherscan.io/v2/api";
+const CHAIN_ID = 56;
+
+/* =====================================================================
+ * 工具函数
+ * ===================================================================== */
+const $ = id => document.getElementById(id);
+let aborted = false;
+
+function log(msg, cls){
+  const el = $("log");
+  const line = document.createElement("div");
+  if(cls) line.className = cls;
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+function setStatus(s){ $("status").textContent = s; }
+const isAddr = a => /^0x[a-fA-F0-9]{40}$/.test(a||"");
+const short = a => a ? a.slice(0,6)+"…"+a.slice(-4) : "—";
+const topicToAddr = t => t ? ("0x"+t.slice(-40)).toLowerCase() : null;
+const bg = h => BigInt(h && h!=="0x" ? (h.startsWith("0x")?h:"0x"+h) : "0");
+
+// 把 18 位整数转成可读数字
+function fmt(big, dp=18, prec=6){
+  const neg = big < 0n; if(neg) big = -big;
+  const base = 10n ** BigInt(dp);
+  const int = big / base;
+  let frac = (big % base).toString().padStart(dp,"0").slice(0,prec).replace(/0+$/,"");
+  return (neg?"-":"") + int.toString() + (frac?("."+frac):"");
+}
+function toNum(big, dp=18){ return Number(fmt(big, dp, 12)); }
+
+// 从 data hex 中取第 i 个 32 字节字（big int）
+function word(data, i){
+  const d = (data||"0x").replace(/^0x/,"");
+  return bg("0x" + (d.substr(i*64, 64) || "0"));
+}
+const sleep = ms => new Promise(r=>setTimeout(r, ms));
+function copy(txt){ navigator.clipboard?.writeText(txt); }
+window.copy = copy;
+
+/* =====================================================================
+ * 网络层
+ * ===================================================================== */
+async function fetchJSON(url, opts){
+  const r = await fetch(url, opts);
+  const txt = await r.text();
+  let j; try{ j = JSON.parse(txt); }catch(e){ throw new Error("非 JSON 响应: "+txt.slice(0,120)); }
+  return { ok:r.ok, status:r.status, json:j };
+}
+
+// 通过 Etherscan V2 拿 receipt logs
+async function getReceiptViaApi(txhash, key){
+  const url = `${ETHERSCAN_V2}?chainid=${CHAIN_ID}&module=proxy&action=eth_getTransactionReceipt&txhash=${txhash}&apikey=${encodeURIComponent(key)}`;
+  const { json } = await fetchJSON(url);
+  if(json.error) throw new Error(json.error.message||"etherscan error");
+  if(json.message && json.message.includes("rate")) throw new Error("Rate limited");
+  return json.result; // { logs, blockNumber, ... }
+}
+// 通过 RPC 拿 receipt
+async function getReceiptViaRpc(txhash, rpc){
+  const { json } = await fetchJSON(rpc, {
+    method:"POST", headers:{"content-type":"application/json"},
+    body: JSON.stringify({jsonrpc:"2.0",id:1,method:"eth_getTransactionReceipt",params:[txhash]})
+  });
+  if(json.error) throw new Error(json.error.message);
+  return json.result;
+}
+// 通过 RPC 拿区块时间戳
+async function getBlockTime(blockHex, mode, key, rpc){
+  if(mode==="rpc"){
+    const { json } = await fetchJSON(rpc, {method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({jsonrpc:"2.0",id:1,method:"eth_getBlockByNumber",params:[blockHex,false]})});
+    return json.result ? Number(bg(json.result.timestamp)) : null;
+  } else {
+    const url = `${ETHERSCAN_V2}?chainid=${CHAIN_ID}&module=proxy&action=eth_getBlockByNumber&tag=${blockHex}&boolean=false&apikey=${encodeURIComponent(key)}`;
+    const { json } = await fetchJSON(url);
+    return json.result ? Number(bg(json.result.timestamp)) : null;
+  }
+}
+
+/* =====================================================================
+ * 交易列表来源
+ * ===================================================================== */
+// OPinX：返回 tx_hash 列表 + 元数据
+async function listFromOpinx(wallet, days, base){
+  const url = `${base.replace(/\/$/,"")}/${wallet}?days=${days}`;
+  log("OPinX 请求: "+url);
+  const { ok, json } = await fetchJSON(url);
+  if(!ok) throw new Error("OPinX 返回错误: "+JSON.stringify(json).slice(0,160));
+  // 递归收集所有 fill，提取 tx_hash 与已知元数据
+  const items = new Map(); // txhash -> meta
+  const walk = node => {
+    if(Array.isArray(node)){ node.forEach(walk); return; }
+    if(node && typeof node==="object"){
+      const tx = node.tx_hash || node.txHash || node.transactionHash || node.transaction_hash;
+      if(tx && /^0x[0-9a-fA-F]{64}$/.test(tx)){
+        const prev = items.get(tx.toLowerCase()) || {};
+        items.set(tx.toLowerCase(), {
+          tx_hash: tx,
+          ts: node.ts || node.timestamp || node.block_timestamp || node.executed_at || prev.ts,
+          market: node.market_title || node.market || node.marketTitle || prev.market,
+          outcome: node.outcome || prev.outcome,
+          counterparty: node.counterparty || prev.counterparty,
+          avg_price: node.avg_price || node.priceExecuted || prev.avg_price,
+        });
+      }
+      Object.values(node).forEach(walk);
+    }
+  };
+  walk(json);
+  log(`OPinX 命中 ${items.size} 笔 tx`);
+  return [...items.values()];
+}
+
+// Predict.fun 官方 /v1/orders/matches
+async function listFromPredict(wallet, days, key){
+  if(!key) throw new Error("官方来源需要 Predict.fun API Key");
+  const endMs = Date.now(), startMs = endMs - days*86400000;
+  let cursor, out = new Map(), pages = 0;
+  while(true){
+    if(aborted) break;
+    const u = new URL("https://api.predict.fun/v1/orders/matches");
+    u.searchParams.set("first","100");
+    u.searchParams.set("signerAddress", wallet);
+    if(cursor) u.searchParams.set("after", cursor);
+    const { ok, json } = await fetchJSON(u, { headers:{ "x-api-key":key } });
+    if(!ok || json.success===false) throw new Error("Predict.fun API 错误: "+JSON.stringify(json).slice(0,160));
+    const batch = json.data || [];
+    let oldest = Infinity;
+    for(const m of batch){
+      const ms = Date.parse(m.executedAt); if(Number.isFinite(ms)) oldest = Math.min(oldest, ms);
+      if(ms < startMs || ms > endMs) continue;
+      const tx = m.transactionHash;
+      if(tx) out.set(tx.toLowerCase(), {
+        tx_hash: tx, ts: Math.floor(ms/1000),
+        market: m.market?.title, avg_price: m.priceExecuted,
+      });
+    }
+    pages++;
+    cursor = json.cursor;
+    if(!cursor || batch.length===0 || oldest < startMs || pages>50) break;
+  }
+  log(`Predict.fun 命中 ${out.size} 笔 tx`);
+  return [...out.values()];
+}
+
+// BSC 直接扫链：getLogs OrderFilled（wallet 作为 maker / taker）
+async function listFromBsc(wallet, days, key){
+  if(!key) throw new Error("扫链来源需要 BSC API Key");
+  const now = Math.floor(Date.now()/1000), startTs = now - days*86400;
+  // 时间 -> 起始区块
+  const blkUrl = `${ETHERSCAN_V2}?chainid=${CHAIN_ID}&module=block&action=getblocknobytime&timestamp=${startTs}&closest=before&apikey=${encodeURIComponent(key)}`;
+  const { json: blkJ } = await fetchJSON(blkUrl);
+  const fromBlock = Number(blkJ.result) || 0;
+  log(`扫链起始区块 ${fromBlock}`);
+  const padded = "0x" + wallet.slice(2).toLowerCase().padStart(64,"0");
+  const items = new Map();
+  for(const ex of EXCHANGES){
+    for(const pos of ["topic2","topic3"]){ // maker=topic2, taker=topic3
+      if(aborted) break;
+      const u = new URL(ETHERSCAN_V2);
+      u.searchParams.set("chainid", CHAIN_ID);
+      u.searchParams.set("module","logs");
+      u.searchParams.set("action","getLogs");
+      u.searchParams.set("address", ex);
+      u.searchParams.set("topic0", T.ORDER_FILLED);
+      u.searchParams.set(pos, padded);
+      u.searchParams.set("fromBlock", fromBlock);
+      u.searchParams.set("toBlock","latest");
+      u.searchParams.set("apikey", key);
+      const { json } = await fetchJSON(u);
+      const res = Array.isArray(json.result) ? json.result : [];
+      for(const lg of res){
+        items.set(lg.transactionHash.toLowerCase(), {
+          tx_hash: lg.transactionHash,
+          ts: lg.timeStamp ? Number(bg(lg.timeStamp)) : undefined,
+        });
+      }
+      await sleep(220); // 控制速率
+    }
+  }
+  log(`扫链命中 ${items.size} 笔 tx`);
+  return [...items.values()];
+}
+
+/* =====================================================================
+ * 核心：解析一笔 receipt，得到相对 wallet 的交易摘要
+ * ===================================================================== */
+function parseReceipt(receipt, wallet){
+  const w = wallet.toLowerCase();
+  const logs = receipt.logs || [];
+  const out = {
+    usdtIn: 0n,        // 钱包付出的 USDT（from=wallet -> exchange）
+    usdtOut: 0n,       // 钱包收到的 USDT
+    sharesByToken: {}, // tokenId -> 净份额(BigInt)
+    netFee: 0n,        // FeeRefunded.feeCharged (to=wallet)
+    counterparties: new Set(),
+    participants: new Set(),
+    referrers: new Set(),
+    walletReferrers: new Set(),
+    role: null,        // maker / taker
+  };
+
+  for(const lg of logs){
+    const t0 = (lg.topics[0]||"").toLowerCase();
+    const addr = (lg.address||"").toLowerCase();
+
+    // --- ERC20 USDT 转账 ---
+    if(t0===T.TRANSFER && addr===USDT){
+      const from = topicToAddr(lg.topics[1]);
+      const to   = topicToAddr(lg.topics[2]);
+      const val  = word(lg.data,0);
+      if(from===w) out.usdtIn  += val;
+      if(to===w)   out.usdtOut += val;
+    }
+
+    // --- OrderFilled：参与者 / 角色 ---
+    else if(t0===T.ORDER_FILLED){
+      const maker = topicToAddr(lg.topics[2]);
+      const taker = topicToAddr(lg.topics[3]);
+      [maker,taker].forEach(a=>{ if(a && !EXCHANGES.has(a)) out.participants.add(a); });
+      if(maker===w) out.role = out.role || "maker";
+      if(taker===w) out.role = out.role || "taker";
+    }
+
+    // --- 条件代币份额转移（TransferSingle）---
+    else if(t0===T.TRANSFER_SINGLE){
+      const from = topicToAddr(lg.topics[2]);
+      const to   = topicToAddr(lg.topics[3]);
+      const id   = word(lg.data,0).toString();
+      const val  = word(lg.data,1);
+      if(to===w)   out.sharesByToken[id] = (out.sharesByToken[id]||0n) + val;
+      if(from===w) out.sharesByToken[id] = (out.sharesByToken[id]||0n) - val;
+    }
+
+    // --- FeeRefunded：净手续费 + 把邀请费归属本钱包 ---
+    else if(t0===T.FEE_REFUNDED){
+      const to = topicToAddr(lg.topics[2]);
+      const feeCharged = word(lg.data,2);
+      if(to===w){
+        out.netFee += feeCharged;
+        if(feeCharged > 0n) out._walletHasFee = true;
+      }
+    }
+
+    // --- ReferralFeeDistributed：邀请人 ---
+    else if(t0===T.REFERRAL){
+      const referrer = topicToAddr(lg.topics[1]);
+      if(referrer) out.referrers.add(referrer);
+    }
+  }
+
+  // 对手方 = 参与者剔除本钱包
+  out.participants.forEach(a=>{ if(a!==w) out.counterparties.add(a); });
+  // 若本钱包在本 tx 有净手续费(feeCharged>0)，则把邀请人标记为「本钱包相关」
+  if(out._walletHasFee) out.referrers.forEach(r=>out.walletReferrers.add(r));
+
+  return out;
+}
+
+/* =====================================================================
+ * 主流程
+ * ===================================================================== */
+async function run(){
+  aborted = false;
+  $("log").innerHTML = "";
+  const wallet = $("wallet").value.trim();
+  if(!isAddr(wallet)){ alert("请输入合法的钱包地址"); return; }
+  const days = Math.max(1, Math.min(90, Number($("days").value)||1));
+  const source = $("source").value;
+  const enrich = $("enrich").value;
+  const bscKey = $("bscKey").value.trim();
+  const rpcUrl = $("rpcUrl").value.trim() || "https://bsc-dataseed.bnbchain.org";
+  const predictKey = $("predictKey").value.trim();
+  const opinxBase = $("opinxBase").value.trim();
+
+  $("go").disabled = true; $("stop").disabled = false;
+  const tbody = $("tbody"); tbody.innerHTML = "";
+  $("summaryCard").style.display = "none";
+
+  try{
+    // 1) 取交易列表
+    setStatus("获取交易列表…");
+    let items = [];
+    if(source==="opinx")   items = await listFromOpinx(wallet, days, opinxBase);
+    else if(source==="predict") items = await listFromPredict(wallet, days, predictKey);
+    else if(source==="bsc") items = await listFromBsc(wallet, days, bscKey);
+
+    if(items.length===0){
+      tbody.innerHTML = `<tr><td colspan="11" class="empty">该来源未返回交易（可换个来源/增大天数）</td></tr>`;
+      return;
+    }
+    // 按时间倒序
+    items.sort((a,b)=>(b.ts||0)-(a.ts||0));
+
+    // 2) 逐笔解析 receipt
+    let totUsdtIn=0n, totUsdtOut=0n, totFee=0n;
+    const refSet = new Set(), cpSet = new Set();
+    let done=0;
+
+    for(const it of items){
+      if(aborted){ log("已停止","err"); break; }
+      done++;
+      setStatus(`解析 ${done}/${items.length} …`);
+
+      let parsed = null;
+      if(enrich!=="none"){
+        try{
+          const receipt = enrich==="rpc"
+            ? await getReceiptViaRpc(it.tx_hash, rpcUrl)
+            : await getReceiptViaApi(it.tx_hash, bscKey);
+          if(receipt){
+            parsed = parseReceipt(receipt, wallet);
+            // 补时间戳
+            if(!it.ts && receipt.blockNumber){
+              try{ it.ts = await getBlockTime(receipt.blockNumber, enrich, bscKey, rpcUrl); }catch(_){}
+            }
+          }
+        }catch(e){
+          log(`tx ${short(it.tx_hash)} 解析失败: ${e.message}`,"err");
+        }
+        if(enrich==="bscapi") await sleep(230); // 免费档限速
+      }
+
+      // 汇总
+      if(parsed){
+        totUsdtIn += parsed.usdtIn; totUsdtOut += parsed.usdtOut; totFee += parsed.netFee;
+        parsed.counterparties.forEach(c=>cpSet.add(c));
+        parsed.walletReferrers.forEach(r=>refSet.add(r));
+      }
+      tbody.appendChild(renderRow(it, parsed, wallet));
+    }
+
+    // 3) 汇总卡片
+    $("summaryCard").style.display = "";
+    $("stats").innerHTML = `
+      <div class="stat"><b>${items.length}</b><span>交易笔数</span></div>
+      <div class="stat"><b>${fmt(totUsdtIn,18,2)}</b><span>付出 USDT</span></div>
+      <div class="stat"><b>${fmt(totUsdtOut,18,2)}</b><span>收到 USDT</span></div>
+      <div class="stat"><b>${fmt(totFee,18,4)}</b><span>净手续费 USDT</span></div>
+      <div class="stat"><b>${cpSet.size}</b><span>对手方地址</span></div>
+      <div class="stat"><b>${refSet.size}</b><span>本钱包邀请人</span></div>
+    `;
+    if(refSet.size){
+      log("本钱包相关邀请人: "+[...refSet].join(", "), "ok");
+    }
+    setStatus("完成");
+    log("完成 ✅","ok");
+  }catch(e){
+    log("错误: "+e.message, "err");
+    setStatus("出错");
+    if(tbody.children.length===0)
+      tbody.innerHTML = `<tr><td colspan="11" class="empty err">${e.message}</td></tr>`;
+  }finally{
+    $("go").disabled = false; $("stop").disabled = true;
+  }
+}
+
+/* =====================================================================
+ * 渲染一行
+ * ===================================================================== */
+function addrCell(a, cls){
+  if(!a) return "—";
+  return `<span class="addr ${cls||''}">${short(a)}</span><span class="copy" onclick="copy('${a}')">⧉</span>`;
+}
+function renderRow(it, p, wallet){
+  const tr = document.createElement("tr");
+  const time = it.ts ? new Date(it.ts*1000).toLocaleString() : "—";
+
+  // 方向 & 份额 & 均价（从 receipt 推断）
+  let dir="—", sharesTxt="—", priceTxt = it.avg_price ? Number(it.avg_price).toFixed(4) : "—";
+  let usdtTxt="—", feeTxt="—", roleTxt="—", marketTxt = it.market || "—";
+  let cpHtml = it.counterparty ? addrCell((""+it.counterparty).toLowerCase()) : "—";
+  let refHtml = "—";
+
+  if(p){
+    roleTxt = p.role ? `<span class="tag ${p.role}">${p.role}</span>` : "—";
+    // 份额：取绝对值最大的 token
+    const toks = Object.entries(p.sharesByToken).filter(([,v])=>v!==0n);
+    if(toks.length){
+      toks.sort((a,b)=>(b[1]<0n?-b[1]:b[1]) > (a[1]<0n?-a[1]:a[1]) ? 1 : -1);
+      const [id,val] = toks[0];
+      const net = val<0n ? -val : val;
+      sharesTxt = fmt(net,18,3);
+      dir = val>0n ? `<span class="tag buy">BUY</span>` : `<span class="tag sell">SELL</span>`;
+      marketTxt = (it.market||"") + `<div class="hint mono">#${id.slice(0,10)}…</div>`;
+      // 均价 = USDT / 份额
+      const usdt = val>0n ? p.usdtIn : p.usdtOut;
+      const shares = toNum(net), money = toNum(usdt);
+      if(shares>0 && money>0) priceTxt = (money/shares).toFixed(4);
+    }
+    const netUsdt = p.usdtIn>0n ? p.usdtIn : p.usdtOut;
+    usdtTxt = fmt(netUsdt,18,4);
+    feeTxt = fmt(p.netFee,18,6);
+    cpHtml = p.counterparties.size
+      ? [...p.counterparties].map(c=>addrCell(c)).join("<br>") : "—";
+    if(p.referrers.size){
+      refHtml = [...p.referrers].map(r=>{
+        const mine = p.walletReferrers.has(r);
+        return addrCell(r,"") + (mine?` <span class="tag ref">本钱包</span>`:"");
+      }).join("<br>");
+    }
+  }
+
+  const tx = it.tx_hash;
+  tr.innerHTML = `
+    <td>${time}</td>
+    <td>${marketTxt}</td>
+    <td>${roleTxt}</td>
+    <td>${dir}</td>
+    <td class="mono">${usdtTxt}</td>
+    <td class="mono">${sharesTxt}</td>
+    <td class="mono">${priceTxt}</td>
+    <td class="mono">${feeTxt}</td>
+    <td>${cpHtml}</td>
+    <td>${refHtml}</td>
+    <td><a href="https://bscscan.com/tx/${tx}" target="_blank">${short(tx)}↗</a></td>
+  `;
+  return tr;
+}
+
+/* =====================================================================
+ * 事件绑定
+ * ===================================================================== */
+$("go").addEventListener("click", run);
+$("stop").addEventListener("click", ()=>{ aborted=true; setStatus("停止中…"); });
+$("wallet").addEventListener("keydown", e=>{ if(e.key==="Enter") run(); });
+
+// 预填示例钱包，方便测试
+$("wallet").value = "0xab929df893b7e6202539aae41c86afc7ab575821";
+</script>
+</body>
+</html>
