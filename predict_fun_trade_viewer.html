@@ -214,6 +214,19 @@
     <div id="pointsResult" class="hint" style="margin-top:12px">输入地址查询，或点击下方成交记录里的 <span class="uname-demo">@用户名</span> 自动查询其积分 / 持仓 / PNL。</div>
   </div>
 
+  <!-- ============ 邀请关系查询 ============ -->
+  <div class="card" id="referralCard">
+    <div class="card-title">邀请关系 · Referral</div>
+    <div class="row" style="gap:10px">
+      <input id="refAddr" placeholder="0x… 钱包 / 邀请人地址" style="flex:1;min-width:240px" />
+      <input id="refDays" type="number" value="30" min="1" max="365" title="回溯天数" style="width:96px" />
+      <button id="refUp" class="secondary">查邀请人 ↑</button>
+      <button id="refDown">查下线 ↓</button>
+    </div>
+    <div class="hint" style="margin-top:6px">「查邀请人」= 谁邀请了该钱包；「查下线」= 该地址邀请了哪些用户。链上解析，需 BSC API Key（或服务端配 <code>BSC_API_KEY</code>）。</div>
+    <div id="refResult" style="margin-top:12px"></div>
+  </div>
+
   <!-- ============ 汇总 ============ -->
   <div class="card" id="summaryCard" style="display:none">
     <div class="card-title">汇总</div>
@@ -627,6 +640,67 @@ async function listFromBsc(wallet, days, key){
 }
 
 /* =====================================================================
+ * 邀请关系（链上）：ReferralFeeDistributed.referrer ↔ 同 tx 的 FeeRefunded.to
+ * ===================================================================== */
+const padTopic = a => "0x" + a.slice(2).toLowerCase().padStart(64,"0");
+function currentBscKey(){ return ($("bscKey").value||"").trim(); }
+function referralReady(){ return (SERVER.enabled && SERVER.bsc) || !!currentBscKey(); }
+
+// 时间(天)→ 起始区块
+async function blockFromDays(days, key){
+  const startTs = Math.floor(Date.now()/1000) - days*86400;
+  const { json } = await fetchJSON(esUrl({ module:"block", action:"getblocknobytime", timestamp:startTs, closest:"before" }, key));
+  return (json && Number(json.result)) || 0;
+}
+// 通用 getLogs（topic-only，无地址过滤）
+async function esLogs(params, key){
+  const { json } = await fetchJSON(esUrl({ module:"logs", action:"getLogs", toBlock:"latest", ...params }, key));
+  if(json && json.message && /Invalid API Key|rate/i.test(json.message)) throw new Error("BSC API: "+json.message);
+  return json && Array.isArray(json.result) ? json.result : [];
+}
+// 从 receipt 提取邀请人 / 被邀请人
+function referrerFromReceipt(receipt){
+  for(const lg of (receipt&&receipt.logs)||[]) if((lg.topics[0]||"").toLowerCase()===T.REFERRAL) return topicToAddr(lg.topics[1]);
+  return null;
+}
+function inviteeFromReceipt(receipt){
+  for(const lg of (receipt&&receipt.logs)||[]) if((lg.topics[0]||"").toLowerCase()===T.FEE_REFUNDED && word(lg.data,2)>0n) return topicToAddr(lg.topics[2]);
+  return null;
+}
+
+// 查某钱包的邀请人：扫它的 FeeRefunded(to=wallet)，取同 tx 的 referrer
+async function findReferrer(address, key, fromBlock){
+  const logs = await esLogs({ topic0:T.FEE_REFUNDED, topic2:padTopic(address), topic0_2_opr:"and", fromBlock }, key);
+  logs.sort((a,b)=> Number(bg(b.blockNumber)) - Number(bg(a.blockNumber)));
+  for(const lg of logs.slice(0,8)){
+    if(aborted) break;
+    if(word(lg.data,2)<=0n) continue;           // feeCharged>0 才有邀请返佣
+    const ref = referrerFromReceipt(await getReceiptViaApi(lg.transactionHash, key));
+    if(ref) return { referrer: ref, tx: lg.transactionHash };
+    await sleep(200);
+  }
+  return null;
+}
+
+// 反查某邀请人邀请的用户：扫 ReferralFeeDistributed(referrer=address)，取每 tx 的 invitee
+async function findInvitees(address, key, fromBlock, onProgress){
+  const logs = await esLogs({ topic0:T.REFERRAL, topic1:padTopic(address), topic0_1_opr:"and", fromBlock }, key);
+  const txs = [...new Set(logs.map(l=>l.transactionHash.toLowerCase()))];
+  const invitees = new Map(); // addr -> {count, lastTs}
+  let done=0; const cap=200;
+  for(const tx of txs){
+    if(aborted) break;
+    if(done>=cap) break;
+    const receipt = await getReceiptViaApi(tx, key);
+    const u = inviteeFromReceipt(receipt);
+    if(u){ const cur = invitees.get(u)||{count:0}; cur.count++; invitees.set(u, cur); }
+    done++; onProgress && onProgress(done, txs.length, invitees.size);
+    await sleep(210);
+  }
+  return { invitees, scanned:done, total:txs.length, capped: txs.length>cap };
+}
+
+/* =====================================================================
  * 核心：解析一笔 receipt，得到相对 wallet 的交易摘要
  * ===================================================================== */
 function parseReceipt(receipt, wallet){
@@ -935,8 +1009,73 @@ async function queryPoints(address){
 }
 
 /* =====================================================================
+ * 邀请关系查询 UI
+ * ===================================================================== */
+// 渲染一个“地址 + @用户名（异步）+ 复制”，用户名可点查积分
+function personHtml(addr, extra){
+  return `<a class="addr" href="${portfolioUrl(addr)}" target="_blank">${short(addr)}</a>`
+       + `<span class="uname ref-uname" data-addr="${addr}"></span>`
+       + `<span class="copy" onclick="copy('${addr}')">⧉</span>` + (extra||"");
+}
+// 给容器内所有 .ref-uname 填用户名
+function fillRefNames(container){
+  container.querySelectorAll(".ref-uname[data-addr]").forEach(async el=>{
+    const acct = await resolveAccount(el.getAttribute("data-addr"));
+    if(acct && acct.name){ el.textContent = " @"+acct.name; el.setAttribute("data-name", acct.name); }
+  });
+}
+async function doFindReferrer(){
+  const box = $("refResult");
+  const addr = $("refAddr").value.trim();
+  if(!isAddr(addr)){ box.innerHTML = `<span class="err">请输入合法地址</span>`; return; }
+  if(!referralReady()){ box.innerHTML = `<span class="err">需要 BSC API Key（或服务端配 BSC_API_KEY）</span>`; return; }
+  aborted = false;
+  const key = currentBscKey(); const days = Math.max(1, Number($("refDays").value)||30);
+  box.innerHTML = `<span class="pill busy">查邀请人中…（回溯 ${days} 天）</span>`;
+  try{
+    const fromBlock = await blockFromDays(days, key);
+    const r = await findReferrer(addr, key, fromBlock);
+    if(!r){ box.innerHTML = `<div class="hint">未找到邀请人（该钱包在最近 ${days} 天可能没有产生过邀请返佣，或邀请发生更早，请加大天数）。</div>`; return; }
+    box.innerHTML = `<div>该钱包的邀请人：<b>${personHtml(r.referrer, ` <a class="addr" href="https://bscscan.com/tx/${r.tx}" target="_blank">tx↗</a>`)}</b></div>`;
+    fillRefNames(box);
+  }catch(e){ box.innerHTML = `<span class="err">${e.message}</span>`; }
+}
+async function doFindInvitees(){
+  const box = $("refResult");
+  const addr = $("refAddr").value.trim();
+  if(!isAddr(addr)){ box.innerHTML = `<span class="err">请输入合法地址</span>`; return; }
+  if(!referralReady()){ box.innerHTML = `<span class="err">需要 BSC API Key（或服务端配 BSC_API_KEY）</span>`; return; }
+  aborted = false;
+  const key = currentBscKey(); const days = Math.max(1, Number($("refDays").value)||30);
+  box.innerHTML = `<span class="pill busy">查下线中…（回溯 ${days} 天）</span>`;
+  try{
+    const fromBlock = await blockFromDays(days, key);
+    const { invitees, scanned, total, capped } = await findInvitees(addr, key, fromBlock,
+      (d,t,n)=>{ box.innerHTML = `<span class="pill busy">解析中 ${d}/${t}，已发现 ${n} 个下线…</span>`; });
+    if(invitees.size===0){ box.innerHTML = `<div class="hint">未发现下线（最近 ${days} 天该地址没有作为邀请人收到返佣）。</div>`; return; }
+    const rows = [...invitees.entries()].sort((a,b)=>b[1].count-a[1].count);
+    box.innerHTML =
+      `<div style="margin-bottom:8px">邀请人 ${personHtml(addr)} 共邀请 <b>${invitees.size}</b> 个用户`
+      + `（扫描 ${scanned}/${total} 笔返佣${capped?"，已截断":""}）：</div>`
+      + `<div class="scroll" style="max-height:40vh"><table><thead><tr><th>#</th><th>下线用户</th><th>返佣笔数</th></tr></thead><tbody>`
+      + rows.map(([a,info],i)=>`<tr><td>${i+1}</td><td>${personHtml(a)}</td><td class="num">${info.count}</td></tr>`).join("")
+      + `</tbody></table></div>`;
+    fillRefNames(box);
+  }catch(e){ box.innerHTML = `<span class="err">${e.message}</span>`; }
+}
+
+/* =====================================================================
  * 事件绑定
  * ===================================================================== */
+$("refUp").addEventListener("click", doFindReferrer);
+$("refDown").addEventListener("click", doFindInvitees);
+// 邀请结果里的 @用户名 也能点查积分
+$("refResult").addEventListener("click", e=>{
+  const u = e.target.closest(".uname[data-addr]");
+  if(!u) return;
+  queryPoints(u.getAttribute("data-addr"));
+  $("pointsCard").scrollIntoView({ behavior:"smooth", block:"start" });
+});
 $("pointsGo").addEventListener("click", ()=>queryPoints($("pointsAddr").value.trim()));
 $("pointsAddr").addEventListener("keydown", e=>{ if(e.key==="Enter") queryPoints($("pointsAddr").value.trim()); });
 // 点击表格里的 @用户名 → 查该地址积分并滚到顶部面板

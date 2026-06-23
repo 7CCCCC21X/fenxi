@@ -45,6 +45,13 @@
 
 页面顶部「积分查询」卡片，或点击成交记录里的 `@用户名`，即可查该钱包的 OPINX 积分、Predict 积分/排名、持仓价值、PNL。
 - 表格里地址点击 → 跳转 `https://predict.fun/zh-cn/portfolio/<地址>`。
+
+### 邀请关系查询
+
+「邀请关系 · Referral」卡片，链上解析（需 BSC API Key 或服务端 `BSC_API_KEY`）：
+- **查邀请人**：扫该钱包的 `FeeRefunded(to=wallet, feeCharged>0)`，取同 tx 的 `ReferralFeeDistributed.referrer`。
+- **查下线**：扫 `ReferralFeeDistributed(referrer=address)`，对每笔 tx 取 `FeeRefunded.to`（feeCharged>0）即被邀请用户，按返佣笔数排序。
+- 可调回溯天数；结果里地址可点开 portfolio、用户名可点查积分。
 - **持仓价值 / PNL** 这些字段常需登录态，若显示「—」，在 Vercel 设 `PREDICT_GRAPHQL_AUTH` 或 `PREDICT_GRAPHQL_COOKIE`（从浏览器登录 predict.fun 后的请求里复制）。
 
 ## 本地使用
