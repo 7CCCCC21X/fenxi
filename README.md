@@ -49,7 +49,7 @@
 
 ### 邀请关系查询
 
-「邀请关系 · Referral」卡片，链上解析（需 BSC API Key 或服务端 `BSC_API_KEY`）：
+「邀请关系 · Referral」卡片，链上解析（有 BSC API Key 走 API；否则自动用免费 **RPC 分块 `eth_getLogs`** 兜底，较慢）：
 - **查邀请人**：扫该钱包的 `FeeRefunded(to=wallet, feeCharged>0)`，取同 tx 的 `ReferralFeeDistributed.referrer`。
 - **查下线**：扫 `ReferralFeeDistributed(referrer=address)`，对每笔 tx 取 `FeeRefunded.to`（feeCharged>0）即被邀请用户，按返佣笔数排序。
 - 可调回溯天数；结果里地址可点开 portfolio、用户名可点查积分。

@@ -223,7 +223,7 @@
       <button id="refUp" class="secondary">查邀请人 ↑</button>
       <button id="refDown">查下线 ↓</button>
     </div>
-    <div class="hint" style="margin-top:6px">「查邀请人」= 谁邀请了该钱包；「查下线」= 该地址邀请了哪些用户。链上解析，需 BSC API Key（或服务端配 <code>BSC_API_KEY</code>）。</div>
+    <div class="hint" style="margin-top:6px">「查邀请人」= 谁邀请了该钱包；「查下线」= 该地址邀请了哪些用户。链上解析：有 BSC API Key 走 API（快），否则自动用 <b>RPC 分块扫描</b>（免费，较慢；天数大时请耐心）。</div>
     <div id="refResult" style="margin-top:12px"></div>
   </div>
 
@@ -696,21 +696,87 @@ async function listFromBsc(wallet, days, key){
  * ===================================================================== */
 const padTopic = a => "0x" + a.slice(2).toLowerCase().padStart(64,"0");
 function currentBscKey(){ return ($("bscKey").value||"").trim(); }
-function referralReady(){ return (SERVER.enabled && SERVER.bsc) || !!currentBscKey(); }
+function rpcUrlVal(){ return ($("rpcUrl").value||"").trim() || "https://bsc-dataseed.bnbchain.org"; }
+// RPC 兜底始终可用（默认公共节点）；BSC API 仅作快路
+function referralReady(){ return true; }
 
-// 时间(天)→ 起始区块
-async function blockFromDays(days, key){
-  const startTs = Math.floor(Date.now()/1000) - days*86400;
-  const { json } = await fetchJSON(esUrl({ module:"block", action:"getblocknobytime", timestamp:startTs, closest:"before" }, key));
-  return (json && Number(json.result)) || 0;
+// 通用 RPC 调用
+async function rpcCall(method, params){
+  const { json } = await fetchJSON(rpcTarget(rpcUrlVal()), {
+    method:"POST", headers:{"content-type":"application/json"},
+    body: JSON.stringify({jsonrpc:"2.0",id:1,method,params})
+  });
+  if(!json) throw new Error("RPC 无响应");
+  if(json.error) throw new Error("RPC: "+(json.error.message||JSON.stringify(json.error)));
+  return json.result;
 }
-// 通用 getLogs（topic-only，无地址过滤）
-async function esLogs(params, key){
-  const { json } = await fetchJSON(esUrl({ module:"logs", action:"getLogs", toBlock:"latest", ...params }, key));
-  const plan = bscPlanError(json); if(plan) throw new Error(plan);
-  if(json && json.message && /Invalid API Key|rate/i.test(json.message)) throw new Error("BSC API: "+json.message);
-  return json && Array.isArray(json.result) ? json.result : [];
+const isRangeErr = e => /limit|range|too many|exceed|10000|result set|more than|block range|query returned/i.test(e.message||"");
+let _bscApiUsable = null; // null=未知, true/false
+
+// 取最新区块高度（优先 BSC API，失败回退 RPC）
+async function blockTip(){
+  const key = currentBscKey();
+  if(_bscApiUsable!==false && ((SERVER.enabled&&SERVER.bsc)||key)){
+    try{
+      const { json } = await fetchJSON(esUrl({ module:"proxy", action:"eth_blockNumber" }, key));
+      const plan = bscPlanError(json); if(plan){ _bscApiUsable=false; }
+      else if(json && json.result){ _bscApiUsable=true; return Number(bg(json.result)); }
+    }catch(_){}
+  }
+  return Number(bg(await rpcCall("eth_blockNumber", [])));
 }
+
+// 取一个区块窗口的日志：优先 BSC API（一次最多 1000 条），不可用则 RPC
+async function getLogsWindow(topics, from, to){
+  const key = currentBscKey();
+  if(_bscApiUsable!==false && ((SERVER.enabled&&SERVER.bsc)||key)){
+    try{
+      const params = { topic0:topics[0], fromBlock:from, toBlock:to };
+      if(topics[1]){ params.topic1 = topics[1]; params.topic0_1_opr = "and"; }
+      if(topics[2]){ params.topic2 = topics[2]; params[topics[1]?"topic1_2_opr":"topic0_2_opr"] = "and"; }
+      const { json } = await fetchJSON(esUrl({ module:"logs", action:"getLogs", ...params }, key));
+      const plan = bscPlanError(json); if(plan){ _bscApiUsable=false; throw new Error(plan); }
+      if(json && json.message && /Invalid API Key|rate/i.test(json.message)) throw new Error("BSC API: "+json.message);
+      _bscApiUsable = true;
+      return json && Array.isArray(json.result) ? json.result : [];
+    }catch(e){
+      if(_bscApiUsable!==false) throw e; // 真错误（非套餐）→ 抛出
+      log("BSC API 不支持 BSC，改用 RPC 扫描日志…");
+    }
+  }
+  // RPC eth_getLogs
+  return await rpcCall("eth_getLogs", [{
+    fromBlock:"0x"+Number(from).toString(16), toBlock:"0x"+Number(to).toString(16),
+    topics: topics.map(t=>t||null)
+  }]);
+}
+
+// 分块扫描一段区间的日志（自适应缩小窗口）
+async function scanLogsRange(topics, fromBlock, toBlock, onProgress){
+  const out=[]; let size=5000, from=fromBlock;
+  while(from<=toBlock){
+    if(aborted) break;
+    const to=Math.min(toBlock, from+size-1);
+    let part;
+    try{ part = await getLogsWindow(topics, from, to); }
+    catch(e){ if(size>500 && isRangeErr(e)){ size=Math.floor(size/2); continue; } throw e; }
+    out.push(...part); from=to+1;
+    onProgress && onProgress(from-fromBlock, toBlock-fromBlock, out.length);
+    await sleep(120);
+  }
+  return out;
+}
+
+// receipt：优先 BSC API，套餐不支持则 RPC
+async function getReceiptAny(tx){
+  const key = currentBscKey();
+  if(_bscApiUsable!==false && ((SERVER.enabled&&SERVER.bsc)||key)){
+    try{ return await getReceiptViaApi(tx, key); }
+    catch(e){ if(!/免费档不支持|not supported|upgrade/i.test(e.message)) throw e; _bscApiUsable=false; }
+  }
+  return await getReceiptViaRpc(tx, rpcUrlVal());
+}
+
 // 从 receipt 提取邀请人 / 被邀请人
 function referrerFromReceipt(receipt){
   for(const lg of (receipt&&receipt.logs)||[]) if((lg.topics[0]||"").toLowerCase()===T.REFERRAL) return topicToAddr(lg.topics[1]);
@@ -721,34 +787,47 @@ function inviteeFromReceipt(receipt){
   return null;
 }
 
-// 查某钱包的邀请人：扫它的 FeeRefunded(to=wallet)，取同 tx 的 referrer
-async function findReferrer(address, key, fromBlock){
-  const logs = await esLogs({ topic0:T.FEE_REFUNDED, topic2:padTopic(address), topic0_2_opr:"and", fromBlock }, key);
-  logs.sort((a,b)=> Number(bg(b.blockNumber)) - Number(bg(a.blockNumber)));
-  for(const lg of logs.slice(0,8)){
+// 查某钱包的邀请人：从最新往回扫 FeeRefunded(to=wallet)，命中即取同 tx 的 referrer
+async function findReferrer(address, days, onProgress){
+  const tip = await blockTip();
+  const fromBlock = Math.max(0, tip - days*28800); // BSC ~28800 块/天
+  const topics = [T.FEE_REFUNDED, null, padTopic(address)];
+  let size=5000, to=tip;
+  while(to>=fromBlock){
     if(aborted) break;
-    if(word(lg.data,2)<=0n) continue;           // feeCharged>0 才有邀请返佣
-    const ref = referrerFromReceipt(await getReceiptViaApi(lg.transactionHash, key));
-    if(ref) return { referrer: ref, tx: lg.transactionHash };
-    await sleep(200);
+    const from=Math.max(fromBlock, to-size+1);
+    let logs;
+    try{ logs = await getLogsWindow(topics, from, to); }
+    catch(e){ if(size>500 && isRangeErr(e)){ size=Math.floor(size/2); continue; } throw e; }
+    logs.sort((a,b)=> Number(bg(b.blockNumber)) - Number(bg(a.blockNumber)));
+    for(const lg of logs){
+      if(aborted) break;
+      if(word(lg.data,2)<=0n) continue;            // feeCharged>0 才有邀请返佣
+      const ref = referrerFromReceipt(await getReceiptAny(lg.transactionHash));
+      if(ref) return { referrer: ref, tx: lg.transactionHash };
+    }
+    to=from-1;
+    onProgress && onProgress(tip-to, tip-fromBlock);
+    await sleep(120);
   }
   return null;
 }
 
 // 反查某邀请人邀请的用户：扫 ReferralFeeDistributed(referrer=address)，取每 tx 的 invitee
-async function findInvitees(address, key, fromBlock, onProgress){
-  const logs = await esLogs({ topic0:T.REFERRAL, topic1:padTopic(address), topic0_1_opr:"and", fromBlock }, key);
+async function findInvitees(address, days, onProgress){
+  const tip = await blockTip();
+  const fromBlock = Math.max(0, tip - days*28800);
+  const topics = [T.REFERRAL, padTopic(address)];
+  const logs = await scanLogsRange(topics, fromBlock, tip,
+    (d,t,n)=>onProgress && onProgress("扫描日志", d, t, n));
   const txs = [...new Set(logs.map(l=>l.transactionHash.toLowerCase()))];
-  const invitees = new Map(); // addr -> {count, lastTs}
-  let done=0; const cap=200;
+  const invitees = new Map(); let done=0; const cap=200;
   for(const tx of txs){
-    if(aborted) break;
-    if(done>=cap) break;
-    const receipt = await getReceiptViaApi(tx, key);
-    const u = inviteeFromReceipt(receipt);
+    if(aborted || done>=cap) break;
+    const u = inviteeFromReceipt(await getReceiptAny(tx));
     if(u){ const cur = invitees.get(u)||{count:0}; cur.count++; invitees.set(u, cur); }
-    done++; onProgress && onProgress(done, txs.length, invitees.size);
-    await sleep(210);
+    done++; onProgress && onProgress("解析返佣", done, txs.length, invitees.size);
+    await sleep(_bscApiUsable===false ? 90 : 210);
   }
   return { invitees, scanned:done, total:txs.length, capped: txs.length>cap };
 }
@@ -1093,13 +1172,12 @@ async function doFindReferrer(){
   const box = $("refResult");
   const addr = $("refAddr").value.trim();
   if(!isAddr(addr)){ box.innerHTML = `<span class="err">请输入合法地址</span>`; return; }
-  if(!referralReady()){ box.innerHTML = `<span class="err">需要 BSC API Key（或服务端配 BSC_API_KEY）</span>`; return; }
   aborted = false;
-  const key = currentBscKey(); const days = Math.max(1, Number($("refDays").value)||30);
+  const days = Math.max(1, Number($("refDays").value)||30);
   box.innerHTML = `<span class="pill busy">查邀请人中…（回溯 ${days} 天）</span>`;
   try{
-    const fromBlock = await blockFromDays(days, key);
-    const r = await findReferrer(addr, key, fromBlock);
+    const r = await findReferrer(addr, days,
+      (scanned,total)=>{ box.innerHTML = `<span class="pill busy">查邀请人中…（已回溯 ${Math.round(scanned/Math.max(total,1)*100)}%）</span>`; });
     if(!r){ box.innerHTML = `<div class="hint">未找到邀请人（该钱包在最近 ${days} 天可能没有产生过邀请返佣，或邀请发生更早，请加大天数）。</div>`; return; }
     box.innerHTML = `<div>该钱包的邀请人：<b>${personHtml(r.referrer, ` <a class="addr" href="https://bscscan.com/tx/${r.tx}" target="_blank">tx↗</a>`)}</b></div>`;
     fillRefNames(box);
@@ -1109,14 +1187,12 @@ async function doFindInvitees(){
   const box = $("refResult");
   const addr = $("refAddr").value.trim();
   if(!isAddr(addr)){ box.innerHTML = `<span class="err">请输入合法地址</span>`; return; }
-  if(!referralReady()){ box.innerHTML = `<span class="err">需要 BSC API Key（或服务端配 BSC_API_KEY）</span>`; return; }
   aborted = false;
-  const key = currentBscKey(); const days = Math.max(1, Number($("refDays").value)||30);
+  const days = Math.max(1, Number($("refDays").value)||30);
   box.innerHTML = `<span class="pill busy">查下线中…（回溯 ${days} 天）</span>`;
   try{
-    const fromBlock = await blockFromDays(days, key);
-    const { invitees, scanned, total, capped } = await findInvitees(addr, key, fromBlock,
-      (d,t,n)=>{ box.innerHTML = `<span class="pill busy">解析中 ${d}/${t}，已发现 ${n} 个下线…</span>`; });
+    const { invitees, scanned, total, capped } = await findInvitees(addr, days,
+      (label,d,t,n)=>{ box.innerHTML = `<span class="pill busy">${label} ${d}/${t}${n!=null?`，已发现 ${n} 个下线`:""}…</span>`; });
     if(invitees.size===0){ box.innerHTML = `<div class="hint">未发现下线（最近 ${days} 天该地址没有作为邀请人收到返佣）。</div>`; return; }
     const rows = [...invitees.entries()].sort((a,b)=>b[1].count-a[1].count);
     box.innerHTML =
