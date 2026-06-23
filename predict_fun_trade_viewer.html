@@ -6,70 +6,137 @@
 <title>Predict.fun 交易查看器 · 对手方 / 邀请人</title>
 <style>
   :root{
-    --bg:#0e1117; --panel:#161b22; --panel2:#1c2230; --border:#2a3240;
-    --text:#e6edf3; --muted:#8b949e; --accent:#3b82f6; --green:#3fb950;
-    --red:#f85149; --yellow:#d29922; --purple:#a371f7; --mono:'SFMono-Regular',Consolas,Menlo,monospace;
+    --bg:#0a0d13; --bg2:#0e131c; --panel:#141a24; --panel2:#1a212e; --panel3:#222b3a;
+    --border:#26303f; --border2:#313d50;
+    --text:#e8eef6; --muted:#93a1b5; --faint:#6b7888;
+    --accent:#4d8dff; --accent2:#7c5cff; --green:#46d07f; --red:#ff6b6b;
+    --yellow:#e2b13c; --purple:#a98bff;
+    --mono:'SFMono-Regular',ui-monospace,Consolas,Menlo,monospace;
+    --shadow:0 6px 24px rgba(0,0,0,.35);
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.5}
-  header{padding:18px 22px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,#11161f,#0e1117)}
-  header h1{margin:0;font-size:18px}
-  header p{margin:4px 0 0;color:var(--muted);font-size:12.5px}
-  .wrap{max-width:1280px;margin:0 auto;padding:20px}
-  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
-  label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
-  input,select{width:100%;padding:8px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:inherit}
-  input:focus,select:focus{outline:none;border-color:var(--accent)}
-  .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
-  button{padding:9px 18px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer}
-  button:hover{filter:brightness(1.1)}
-  button.secondary{background:var(--panel2);border:1px solid var(--border)}
-  button:disabled{opacity:.5;cursor:not-allowed}
-  .hint{font-size:11.5px;color:var(--muted);margin-top:4px}
-  details.adv{margin-top:6px}
-  details.adv summary{cursor:pointer;color:var(--accent);font-size:12.5px;user-select:none}
+  ::selection{background:rgba(77,141,255,.3)}
+  body{margin:0;background:
+      radial-gradient(900px 500px at 100% -5%,rgba(124,92,255,.10),transparent 60%),
+      radial-gradient(900px 500px at -5% 0,rgba(77,141,255,.10),transparent 55%),
+      var(--bg);
+    color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+
+  header{position:sticky;top:0;z-index:20;padding:14px 22px;border-bottom:1px solid var(--border);
+    background:rgba(10,13,19,.78);backdrop-filter:blur(12px);display:flex;align-items:center;gap:14px}
+  .logo{width:34px;height:34px;border-radius:9px;flex:0 0 auto;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));
+    display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:16px;box-shadow:0 4px 14px rgba(77,141,255,.4)}
+  header h1{margin:0;font-size:16px;font-weight:700;letter-spacing:.2px}
+  header p{margin:2px 0 0;color:var(--muted);font-size:12px}
+  .badge-chain{margin-left:auto;font-size:11px;font-weight:700;color:#ffd76b;
+    background:rgba(240,185,11,.12);border:1px solid rgba(240,185,11,.35);padding:4px 10px;border-radius:999px;white-space:nowrap}
+
+  .wrap{max-width:1320px;margin:0 auto;padding:22px}
+  .card{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:var(--shadow)}
+  .card-title{font-size:12px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.8px;margin:0 0 14px;display:flex;align-items:center;gap:8px}
+  .card-title::before{content:"";width:3px;height:13px;border-radius:2px;background:linear-gradient(var(--accent),var(--accent2))}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
+  label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:6px;font-weight:500}
+  input,select{width:100%;padding:10px 12px;background:var(--panel2);border:1px solid var(--border2);border-radius:9px;color:var(--text);font-size:13px;font-family:inherit;transition:border-color .15s,box-shadow .15s}
+  input::placeholder{color:var(--faint)}
+  input:hover,select:hover{border-color:#3b485e}
+  input:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(77,141,255,.18)}
+  select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%2393a1b5' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px}
+
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  button{padding:11px 22px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;transition:transform .08s,filter .15s,box-shadow .15s;box-shadow:0 4px 14px rgba(77,141,255,.3)}
+  button:hover{filter:brightness(1.08);box-shadow:0 6px 18px rgba(77,141,255,.42)}
+  button:active{transform:translateY(1px)}
+  button.secondary{background:var(--panel3);border:1px solid var(--border2);color:var(--text);box-shadow:none}
+  button.secondary:hover{filter:none;background:#2a3445}
+  button:disabled{opacity:.45;cursor:not-allowed;box-shadow:none;filter:none}
+
+  .hint{font-size:11px;color:var(--faint);margin-top:6px;line-height:1.6}
+  code{font-family:var(--mono);font-size:11.5px;background:var(--panel3);padding:1.5px 6px;border-radius:5px;color:#bcd0ea}
+
+  details.adv{margin-top:14px;border-top:1px dashed var(--border2);padding-top:12px}
+  details.adv summary{cursor:pointer;color:var(--accent);font-size:12.5px;font-weight:600;user-select:none;list-style:none}
+  details.adv summary::-webkit-details-marker{display:none}
+  details.adv summary::before{content:"⚙ ";opacity:.8}
+
   .mono{font-family:var(--mono)}
-  .addr{font-family:var(--mono);font-size:12px}
+  .addr{font-family:var(--mono);font-size:12px;color:#cdd9ea}
   a{color:var(--accent);text-decoration:none}
   a:hover{text-decoration:underline}
-  .stats{display:flex;gap:18px;flex-wrap:wrap;margin:6px 0 0}
-  .stat{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px 14px}
-  .stat b{font-size:18px;display:block}
+
+  /* 横幅 */
+  .banner{display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:10px 14px;border-radius:10px;font-size:12.5px;font-weight:500}
+  .banner.ok{background:linear-gradient(90deg,rgba(70,208,127,.14),rgba(70,208,127,.04));border:1px solid rgba(70,208,127,.4);color:#a6f0c4}
+  .banner.info{background:rgba(77,141,255,.1);border:1px solid rgba(77,141,255,.3);color:#bcd4ff}
+
+  /* 汇总卡片 */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+  .stat{background:linear-gradient(180deg,var(--panel2),var(--bg2));border:1px solid var(--border);border-radius:11px;padding:13px 16px;position:relative;overflow:hidden}
+  .stat::after{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:linear-gradient(var(--accent),var(--accent2));opacity:.7}
+  .stat b{font-size:21px;display:block;font-weight:700;letter-spacing:.3px}
   .stat span{font-size:11px;color:var(--muted)}
-  table{width:100%;border-collapse:collapse;font-size:12.5px}
-  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
-  th{color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;position:sticky;top:0;background:var(--panel)}
-  tr:hover td{background:rgba(255,255,255,.02)}
-  .tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
-  .tag.buy{background:rgba(63,185,80,.15);color:var(--green)}
-  .tag.sell{background:rgba(248,81,73,.15);color:var(--red)}
-  .tag.maker{background:rgba(163,113,247,.15);color:var(--purple)}
-  .tag.taker{background:rgba(59,130,246,.15);color:var(--accent)}
-  .tag.ref{background:rgba(210,153,34,.15);color:var(--yellow)}
-  .copy{cursor:pointer;color:var(--muted);font-size:11px;margin-left:4px}
-  .copy:hover{color:var(--text)}
-  #log{font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:pre-wrap;max-height:160px;overflow:auto}
+
+  /* 表格 */
+  .scroll{overflow:auto;max-height:66vh;border-radius:12px;border:1px solid var(--border)}
+  .scroll::-webkit-scrollbar{height:10px;width:10px}
+  .scroll::-webkit-scrollbar-thumb{background:var(--border2);border-radius:6px}
+  .scroll::-webkit-scrollbar-track{background:transparent}
+  table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
+  th,td{text-align:left;padding:11px 13px;vertical-align:top;white-space:nowrap}
+  td{border-top:1px solid var(--border)}
+  th{color:var(--faint);font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;position:sticky;top:0;z-index:1;background:#10151e;backdrop-filter:blur(4px)}
+  tbody tr{transition:background .12s}
+  tbody tr:nth-child(even) td{background:rgba(255,255,255,.012)}
+  tbody tr:hover td{background:rgba(77,141,255,.07)}
+  td.num{font-family:var(--mono);text-align:right;color:#dbe6f4}
+
+  .tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.3px}
+  .tag.buy{background:rgba(70,208,127,.16);color:var(--green);border:1px solid rgba(70,208,127,.35)}
+  .tag.sell{background:rgba(255,107,107,.16);color:var(--red);border:1px solid rgba(255,107,107,.35)}
+  .tag.maker{background:rgba(169,139,255,.16);color:var(--purple);border:1px solid rgba(169,139,255,.35)}
+  .tag.taker{background:rgba(77,141,255,.16);color:var(--accent);border:1px solid rgba(77,141,255,.35)}
+  .tag.ref{background:rgba(226,177,60,.16);color:var(--yellow);border:1px solid rgba(226,177,60,.4)}
+
+  .copy{cursor:pointer;color:var(--faint);font-size:11px;margin-left:5px;transition:color .12s}
+  .copy:hover{color:var(--accent)}
+
+  #log{font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:pre-wrap;max-height:170px;overflow:auto;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}
+  #log:empty::before{content:"等待运行…";color:var(--faint)}
   .err{color:var(--red)}
   .ok{color:var(--green)}
-  .pill{font-size:11px;color:var(--muted)}
-  .scroll{overflow:auto;max-height:65vh;border-radius:8px}
-  .empty{padding:30px;text-align:center;color:var(--muted)}
-  .legend{font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.7}
-  .legend code{background:var(--panel2);padding:1px 5px;border-radius:4px}
+
+  .pill{font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:7px}
+  .pill.busy::before{content:"";width:13px;height:13px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .empty{padding:46px 20px;text-align:center;color:var(--faint)}
+  .legend{font-size:11.5px;color:var(--muted);margin-top:14px;line-height:1.85;padding-top:12px;border-top:1px solid var(--border)}
+
+  @media(max-width:640px){
+    .wrap{padding:14px}
+    header p{display:none}
+    .card{padding:14px}
+  }
 </style>
 </head>
 <body>
 <header>
-  <h1>Predict.fun 交易查看器 — 对手方 &amp; 邀请人</h1>
-  <p>交易列表来自 OPinX / Predict.fun，链上 receipt 用 BSC API（Etherscan V2 · chainid=56）或 RPC 解析对手方与邀请人。</p>
+  <div class="logo">P</div>
+  <div>
+    <h1>Predict.fun 交易查看器 — 对手方 &amp; 邀请人</h1>
+    <p>交易列表来自 OPinX / Predict.fun，链上 receipt 用 BSC RPC / API 解析对手方与邀请人</p>
+  </div>
+  <span class="badge-chain">● BNB Smart Chain · 56</span>
 </header>
 
 <div class="wrap">
 
   <!-- ============ 查询表单 ============ -->
   <div class="card">
-    <div id="srvBanner" style="display:none;margin-bottom:12px;padding:8px 12px;border-radius:6px;background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.4);font-size:12.5px"></div>
+    <div class="card-title">查询条件</div>
+    <div id="srvBanner" class="banner" style="display:none"></div>
     <div class="grid">
       <div>
         <label>钱包地址 Wallet</label>
@@ -130,6 +197,7 @@
 
   <!-- ============ 汇总 ============ -->
   <div class="card" id="summaryCard" style="display:none">
+    <div class="card-title">汇总</div>
     <div class="stats" id="stats"></div>
     <div class="legend">
       <b>判定逻辑：</b>
@@ -141,6 +209,7 @@
 
   <!-- ============ 结果表 ============ -->
   <div class="card">
+    <div class="card-title">成交记录</div>
     <div class="scroll">
       <table id="resultTable">
         <thead>
@@ -167,7 +236,7 @@
 
   <!-- ============ 日志 ============ -->
   <div class="card">
-    <label>运行日志</label>
+    <div class="card-title">运行日志</div>
     <div id="log"></div>
   </div>
 
@@ -212,7 +281,7 @@ function log(msg, cls){
   el.appendChild(line);
   el.scrollTop = el.scrollHeight;
 }
-function setStatus(s){ $("status").textContent = s; }
+function setStatus(s){ const el=$("status"); el.textContent = s; el.className = "pill"+(/…$/.test(s)?" busy":""); }
 const isAddr = a => /^0x[a-fA-F0-9]{40}$/.test(a||"");
 const short = a => a ? a.slice(0,6)+"…"+a.slice(-4) : "—";
 const topicToAddr = t => t ? ("0x"+t.slice(-40)).toLowerCase() : null;
@@ -660,10 +729,10 @@ function renderRow(it, p, wallet){
     <td>${marketTxt}</td>
     <td>${roleTxt}</td>
     <td>${dir}</td>
-    <td class="mono">${usdtTxt}</td>
-    <td class="mono">${sharesTxt}</td>
-    <td class="mono">${priceTxt}</td>
-    <td class="mono">${feeTxt}</td>
+    <td class="num">${usdtTxt}</td>
+    <td class="num">${sharesTxt}</td>
+    <td class="num">${priceTxt}</td>
+    <td class="num">${feeTxt}</td>
     <td>${cpHtml}</td>
     <td>${refHtml}</td>
     <td><a href="https://bscscan.com/tx/${tx}" target="_blank">${short(tx)}↗</a></td>
@@ -685,19 +754,18 @@ $("wallet").value = "0xab929df893b7e6202539aae41c86afc7ab575821";
 (async ()=>{
   await detectServer();
   const banner = $("srvBanner");
+  const dot = v => v ? `<b style="color:#7ff0b0">已配置</b>` : `<b style="color:#ffb0b0">未配置</b>`;
+  banner.style.display = "";
   if(SERVER.enabled){
-    banner.style.display = "";
-    banner.innerHTML = `✅ 已连接服务端代理（Vercel 环境变量）：`
-      + `Predict.fun <b>${SERVER.predict?"已配置":"未配置"}</b> · `
-      + `BSC <b>${SERVER.bsc?"已配置":"未配置"}</b> · `
-      + `RPC <b>${SERVER.rpc?"已配置":"未配置"}</b>。下方 key 可留空。`;
+    banner.className = "banner ok";
+    banner.innerHTML = `✅ 已连接服务端代理（Vercel 环境变量）　`
+      + `Predict.fun ${dot(SERVER.predict)} · BSC ${dot(SERVER.bsc)} · RPC ${dot(SERVER.rpc)}　— 已配置项下方 key 可留空`;
     if(SERVER.predict) $("predictKey").placeholder = "服务端已配置，可留空";
     if(SERVER.bsc) $("bscKey").placeholder = "服务端已配置，可留空";
     if(SERVER.rpc) $("rpcUrl").placeholder = "服务端已配置，可留空";
   } else {
-    banner.style.display = "";
-    banner.className = "hint";
-    banner.textContent = "ℹ️ 未检测到 /api 服务端代理：当前为本地/纯静态模式，请在下方手填 API Key。";
+    banner.className = "banner info";
+    banner.innerHTML = "ℹ️ 未检测到 /api 服务端代理：当前为本地 / 纯静态模式，请在下方手填 API Key。";
   }
 })();
 </script>
