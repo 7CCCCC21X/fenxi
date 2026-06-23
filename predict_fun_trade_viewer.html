@@ -69,6 +69,7 @@
 
   <!-- ============ 查询表单 ============ -->
   <div class="card">
+    <div id="srvBanner" style="display:none;margin-bottom:12px;padding:8px 12px;border-radius:6px;background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.4);font-size:12.5px"></div>
     <div class="grid">
       <div>
         <label>钱包地址 Wallet</label>
@@ -238,6 +239,30 @@ window.copy = copy;
 /* =====================================================================
  * 网络层
  * ===================================================================== */
+// 服务端代理探测：部署在 Vercel 时 /api/config 可用，则从环境变量读 key
+let SERVER = { enabled:false, predict:false, bsc:false, rpc:false };
+async function detectServer(){
+  try{
+    const r = await fetch("/api/config", { cache:"no-store" });
+    if(r.ok){ const j = await r.json(); SERVER = { ...j, enabled:true }; }
+    else SERVER = { enabled:false };
+  }catch(_){ SERVER = { enabled:false }; }
+  return SERVER;
+}
+// 构造 Etherscan V2 请求地址：服务端模式走 /api/bsc（key 在服务端注入），否则直连
+function esUrl(params, key){
+  if(SERVER.enabled && SERVER.bsc){
+    const u = new URL("/api/bsc", location.origin);
+    Object.entries(params).forEach(([k,v])=>u.searchParams.set(k,v));
+    return u.toString();
+  }
+  const u = new URL(ETHERSCAN_V2);
+  u.searchParams.set("chainid", CHAIN_ID);
+  Object.entries(params).forEach(([k,v])=>u.searchParams.set(k,v));
+  if(key) u.searchParams.set("apikey", key);
+  return u.toString();
+}
+
 async function fetchJSON(url, opts){
   let r;
   try{ r = await fetch(url, opts); }
@@ -249,16 +274,18 @@ async function fetchJSON(url, opts){
 
 // 通过 Etherscan V2 拿 receipt logs
 async function getReceiptViaApi(txhash, key){
-  const url = `${ETHERSCAN_V2}?chainid=${CHAIN_ID}&module=proxy&action=eth_getTransactionReceipt&txhash=${txhash}&apikey=${encodeURIComponent(key)}`;
+  const url = esUrl({ module:"proxy", action:"eth_getTransactionReceipt", txhash }, key);
   const { json } = await fetchJSON(url);
   if(!json) throw new Error("BSC API 无响应");
   if(json.error) throw new Error(json.error.message||"etherscan error");
   if(json.message && /rate|Invalid API Key/i.test(json.message)) throw new Error("BSC API: "+json.message);
   return json.result; // { logs, blockNumber, ... }
 }
+// RPC 目标：服务端有 BSC_RPC_URL 时走 /api/rpc，否则直连用户填的 RPC
+function rpcTarget(rpc){ return (SERVER.enabled && SERVER.rpc) ? "/api/rpc" : rpc; }
 // 通过 RPC 拿 receipt
 async function getReceiptViaRpc(txhash, rpc){
-  const { json } = await fetchJSON(rpc, {
+  const { json } = await fetchJSON(rpcTarget(rpc), {
     method:"POST", headers:{"content-type":"application/json"},
     body: JSON.stringify({jsonrpc:"2.0",id:1,method:"eth_getTransactionReceipt",params:[txhash]})
   });
@@ -269,11 +296,11 @@ async function getReceiptViaRpc(txhash, rpc){
 // 通过 RPC 拿区块时间戳
 async function getBlockTime(blockHex, mode, key, rpc){
   if(mode==="rpc"){
-    const { json } = await fetchJSON(rpc, {method:"POST",headers:{"content-type":"application/json"},
+    const { json } = await fetchJSON(rpcTarget(rpc), {method:"POST",headers:{"content-type":"application/json"},
       body:JSON.stringify({jsonrpc:"2.0",id:1,method:"eth_getBlockByNumber",params:[blockHex,false]})});
     return json && json.result ? Number(bg(json.result.timestamp)) : null;
   } else {
-    const url = `${ETHERSCAN_V2}?chainid=${CHAIN_ID}&module=proxy&action=eth_getBlockByNumber&tag=${blockHex}&boolean=false&apikey=${encodeURIComponent(key)}`;
+    const url = esUrl({ module:"proxy", action:"eth_getBlockByNumber", tag:blockHex, boolean:false }, key);
     const { json } = await fetchJSON(url);
     return json && json.result ? Number(bg(json.result.timestamp)) : null;
   }
@@ -284,12 +311,17 @@ async function getBlockTime(blockHex, mode, key, rpc){
  * ===================================================================== */
 // OPinX：返回 tx_hash 列表 + 元数据
 async function listFromOpinx(wallet, days, base){
-  const url = `${base.replace(/\/$/,"")}/${wallet}?days=${days}`;
+  // 服务端模式走 /api/opinx（服务端带 Origin 头，绕过来源校验）
+  const url = SERVER.enabled
+    ? `/api/opinx?wallet=${wallet}&days=${days}`
+    : `${base.replace(/\/$/,"")}/${wallet}?days=${days}`;
   log("OPinX 请求: "+url);
   const { ok, status, json, text } = await fetchJSON(url);
   if(!ok || !json){
     let hint = "";
-    if(status===404) hint = " — 该免 Key 接口可能限制了直接浏览器访问（校验来源）。请改用「BSC 直接扫链」或「Predict.fun 官方」来源。";
+    if(status===404) hint = SERVER.enabled
+      ? " — 服务端代理未命中（确认 /api 已部署、OPINX_BASE 正确）。也可改用「BSC 直接扫链」。"
+      : " — 该免 Key 接口可能限制了直接浏览器访问（校验来源）。部署到 Vercel 用 /api 代理，或改用「BSC 直接扫链」。";
     else if(status===403) hint = " — 被拒绝访问。请改用「BSC 直接扫链」来源。";
     throw new Error(`OPinX HTTP ${status}${hint}` + (text?(" | "+text.slice(0,120)):""));
   }
@@ -320,16 +352,19 @@ async function listFromOpinx(wallet, days, base){
 
 // Predict.fun 官方 /v1/orders/matches
 async function listFromPredict(wallet, days, key){
-  if(!key) throw new Error("官方来源需要 Predict.fun API Key");
+  const useServer = SERVER.enabled && SERVER.predict;
+  if(!useServer && !key) throw new Error("官方来源需要 Predict.fun API Key（或在 Vercel 设 PREDICT_API_KEY）");
   const endMs = Date.now(), startMs = endMs - days*86400000;
   let cursor, out = new Map(), pages = 0;
   while(true){
     if(aborted) break;
-    const u = new URL("https://api.predict.fun/v1/orders/matches");
+    const u = useServer ? new URL("/api/predict", location.origin)
+                        : new URL("https://api.predict.fun/v1/orders/matches");
     u.searchParams.set("first","100");
     u.searchParams.set("signerAddress", wallet);
     if(cursor) u.searchParams.set("after", cursor);
-    const { ok, status, json, text } = await fetchJSON(u, { headers:{ "x-api-key":key } });
+    const opts = useServer ? {} : { headers:{ "x-api-key":key } };
+    const { ok, status, json, text } = await fetchJSON(u, opts);
     if(!ok || !json || json.success===false)
       throw new Error(`Predict.fun API HTTP ${status}: ` + (json?JSON.stringify(json).slice(0,160):text.slice(0,160)));
     const batch = json.data || [];
@@ -353,30 +388,27 @@ async function listFromPredict(wallet, days, key){
 
 // BSC 直接扫链：getLogs OrderFilled（wallet 作为 maker / taker）
 async function listFromBsc(wallet, days, key){
-  if(!key) throw new Error("扫链来源需要 BSC API Key");
+  if(!(SERVER.enabled && SERVER.bsc) && !key)
+    throw new Error("扫链来源需要 BSC API Key（或在 Vercel 设 BSC_API_KEY）");
   const now = Math.floor(Date.now()/1000), startTs = now - days*86400;
   // 时间 -> 起始区块
-  const blkUrl = `${ETHERSCAN_V2}?chainid=${CHAIN_ID}&module=block&action=getblocknobytime&timestamp=${startTs}&closest=before&apikey=${encodeURIComponent(key)}`;
+  const blkUrl = esUrl({ module:"block", action:"getblocknobytime", timestamp:startTs, closest:"before" }, key);
   const { json: blkJ } = await fetchJSON(blkUrl);
-  const fromBlock = Number(blkJ.result) || 0;
+  const fromBlock = (blkJ && Number(blkJ.result)) || 0;
   log(`扫链起始区块 ${fromBlock}`);
   const padded = "0x" + wallet.slice(2).toLowerCase().padStart(64,"0");
   const items = new Map();
   for(const ex of EXCHANGES){
     for(const pos of ["topic2","topic3"]){ // maker=topic2, taker=topic3
       if(aborted) break;
-      const u = new URL(ETHERSCAN_V2);
-      u.searchParams.set("chainid", CHAIN_ID);
-      u.searchParams.set("module","logs");
-      u.searchParams.set("action","getLogs");
-      u.searchParams.set("address", ex);
-      u.searchParams.set("topic0", T.ORDER_FILLED);
-      u.searchParams.set(pos, padded);
       // Etherscan 要求显式声明 topic0 与目标 topic 的 AND 关系，否则地址过滤被忽略
-      u.searchParams.set(pos==="topic2" ? "topic0_2_opr" : "topic0_3_opr", "and");
-      u.searchParams.set("fromBlock", fromBlock);
-      u.searchParams.set("toBlock","latest");
-      u.searchParams.set("apikey", key);
+      const params = {
+        module:"logs", action:"getLogs", address:ex,
+        topic0:T.ORDER_FILLED, [pos]:padded,
+        [pos==="topic2" ? "topic0_2_opr" : "topic0_3_opr"]:"and",
+        fromBlock, toBlock:"latest",
+      };
+      const u = esUrl(params, key);
       const { json } = await fetchJSON(u);
       if(json && json.message && /Invalid API Key|rate/i.test(json.message))
         throw new Error("BSC API: "+json.message);
@@ -490,6 +522,14 @@ async function run(){
   $("summaryCard").style.display = "none";
 
   try{
+    // 0) 探测服务端代理（Vercel /api，读环境变量）
+    await detectServer();
+    if(SERVER.enabled){
+      log(`已连接服务端代理：Predict=${SERVER.predict?"✓":"✗"} BSC=${SERVER.bsc?"✓":"✗"} RPC=${SERVER.rpc?"✓":"✗"}（key 来自 Vercel 环境变量）`, "ok");
+    } else {
+      log("未检测到 /api 服务端代理：使用页面手填的 key（本地或纯静态部署）");
+    }
+
     // 1) 取交易列表
     setStatus("获取交易列表…");
     let items = [];
@@ -639,6 +679,26 @@ $("wallet").addEventListener("keydown", e=>{ if(e.key==="Enter") run(); });
 
 // 预填示例钱包，方便测试
 $("wallet").value = "0xab929df893b7e6202539aae41c86afc7ab575821";
+
+// 页面加载时探测服务端代理，更新 key 输入框提示
+(async ()=>{
+  await detectServer();
+  const banner = $("srvBanner");
+  if(SERVER.enabled){
+    banner.style.display = "";
+    banner.innerHTML = `✅ 已连接服务端代理（Vercel 环境变量）：`
+      + `Predict.fun <b>${SERVER.predict?"已配置":"未配置"}</b> · `
+      + `BSC <b>${SERVER.bsc?"已配置":"未配置"}</b> · `
+      + `RPC <b>${SERVER.rpc?"已配置":"未配置"}</b>。下方 key 可留空。`;
+    if(SERVER.predict) $("predictKey").placeholder = "服务端已配置，可留空";
+    if(SERVER.bsc) $("bscKey").placeholder = "服务端已配置，可留空";
+    if(SERVER.rpc) $("rpcUrl").placeholder = "服务端已配置，可留空";
+  } else {
+    banner.style.display = "";
+    banner.className = "hint";
+    banner.textContent = "ℹ️ 未检测到 /api 服务端代理：当前为本地/纯静态模式，请在下方手填 API Key。";
+  }
+})();
 </script>
 </body>
 </html>
