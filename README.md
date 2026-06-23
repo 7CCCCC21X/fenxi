@@ -18,7 +18,8 @@
 | 变量名 | 用途 | 必填 |
 |---|---|---|
 | `BSC_API_KEY` | Etherscan V2 API Key（查 BSC，`chainid=56`）。也可用 `ETHERSCAN_API_KEY` | 识别对手方/邀请人需要 |
-| `PREDICT_API_KEY` | Predict.fun 官方 `x-api-key`（用官方来源时） | 选填 |
+| `PREDICT_API_KEY` | Predict.fun 官方 `x-api-key`（用官方来源时；也会附加到 GraphQL） | 选填 |
+| `PREDICT_GRAPHQL_AUTH` / `PREDICT_GRAPHQL_COOKIE` | Predict.fun GraphQL 登录态（个别字段需要时） | 选填 |
 | `BSC_RPC_URL` | BSC JSON-RPC 地址（用 RPC 解析时） | 选填 |
 | `OPINX_BASE` | 覆盖 OPinX 接口前缀，默认 `https://tool.opinx.app/api/predict/orders` | 选填 |
 
@@ -37,6 +38,7 @@
 - `GET /api/opinx` — 代理 OPinX，并带 `Origin: predalpha.xyz`，绕过其来源校验（浏览器 `fetch` 无法伪造该头，这也是直连常 404 的原因）。
 - `GET /api/predict` — 代理 Predict.fun，注入 `x-api-key`。
 - `POST /api/rpc` — 代理 BSC RPC（`BSC_RPC_URL`）。
+- `POST /api/graphql` — 代理 Predict.fun GraphQL（带 Origin/Referer），解析**对手方/邀请人用户名**（`account(address).name`）与**市场名/网站**（`market(id).slug`）。地址自动转 EIP-55 校验和（小写会返回 null）。
 
 ## 本地使用
 

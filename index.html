@@ -101,6 +101,8 @@
 
   .copy{cursor:pointer;color:var(--faint);font-size:11px;margin-left:5px;transition:color .12s}
   .copy:hover{color:var(--accent)}
+  .uname{color:#7fd1ff;font-weight:600;font-size:12px}
+  .mkt a{color:#9fd0ff}
 
   #log{font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:pre-wrap;max-height:170px;overflow:auto;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}
   #log:empty::before{content:"等待运行…";color:var(--faint)}
@@ -204,6 +206,7 @@
       <code>对手方</code> = 同一笔 tx 内所有 OrderFilled 的 maker/taker，剔除本钱包与 Exchange 撮合合约后剩下的真实地址。
       <code>邀请人</code> = <code>ReferralFeeDistributed.referrer</code>；当同一笔 <code>FeeRefunded.to</code> 为本钱包且 <code>feeCharged&gt;0</code> 时标记为「本钱包相关」。
       <code>净手续费</code> 取 <code>FeeRefunded.feeCharged</code>（退款后实际收取）。
+      <code>@用户名</code> / <code>市场名·网站</code> 由 Predict.fun GraphQL（<code>account(address).name</code> 与 <code>market(id).slug</code>）解析，需走 <code>/api/graphql</code>（部署到 Vercel）。地址会自动转 EIP-55 校验和。
     </div>
   </div>
 
@@ -263,6 +266,7 @@ const T = {
   FEE_REFUNDED:    "0xb608d2bf25d8b4b744ba23ce2ea9802ea955e216c064a62f42152fbf98958d24",
   REFERRAL:        "0x49ac620b558864688b463a3f134957b7c79395240bcc59985d0fbd40236cd0e3",
   TRANSFER_SINGLE: "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62",
+  POSITION_SPLIT:  "0x2e6bb91f8cbcda0c93623c54d0403a43514fabc40084ec96b6d5379a74786298", // PositionSplit(...,conditionId indexed,...)
 };
 const ETHERSCAN_V2 = "https://api.etherscan.io/v2/api";
 const CHAIN_ID = 56;
@@ -286,6 +290,85 @@ const isAddr = a => /^0x[a-fA-F0-9]{40}$/.test(a||"");
 const short = a => a ? a.slice(0,6)+"…"+a.slice(-4) : "—";
 const topicToAddr = t => t ? ("0x"+t.slice(-40)).toLowerCase() : null;
 const bg = h => BigInt(h && h!=="0x" ? (h.startsWith("0x")?h:"0x"+h) : "0");
+
+/* ---- keccak-256 + EIP-55 校验和（Predict GraphQL 要求 checksummed 地址，小写返回 null） ---- */
+const _RC=[0x0000000000000001n,0x0000000000008082n,0x800000000000808An,0x8000000080008000n,0x000000000000808Bn,0x0000000080000001n,0x8000000080008081n,0x8000000000008009n,0x000000000000008An,0x0000000000000088n,0x0000000080008009n,0x000000008000000An,0x000000008000808Bn,0x800000000000008Bn,0x8000000000008089n,0x8000000000008003n,0x8000000000008002n,0x8000000000000080n,0x000000000000800An,0x800000008000000An,0x8000000080008081n,0x8000000000008080n,0x0000000080000001n,0x8000000080008008n];
+const _RO=[0,1,62,28,27,36,44,6,55,20,3,10,43,25,39,41,45,15,21,8,18,2,61,56,14];
+const _M64=(1n<<64n)-1n;
+const _rotl=(x,n)=>((x<<BigInt(n))|(x>>BigInt(64-n)))&_M64;
+function _keccakf(s){
+  for(let r=0;r<24;r++){
+    const C=new Array(5);
+    for(let x=0;x<5;x++) C[x]=s[x]^s[x+5]^s[x+10]^s[x+15]^s[x+20];
+    const D=new Array(5);
+    for(let x=0;x<5;x++) D[x]=C[(x+4)%5]^_rotl(C[(x+1)%5],1);
+    for(let x=0;x<5;x++) for(let y=0;y<5;y++) s[x+5*y]^=D[x];
+    const B=new Array(25);
+    for(let x=0;x<5;x++) for(let y=0;y<5;y++) B[y+5*((2*x+3*y)%5)]=_rotl(s[x+5*y],_RO[x+5*y]);
+    for(let x=0;x<5;x++) for(let y=0;y<5;y++) s[x+5*y]=B[x+5*y]^((~B[((x+1)%5)+5*y])&B[((x+2)%5)+5*y]);
+    s[0]^=_RC[r];
+  }
+}
+function keccak256(bytes){
+  const rate=136, s=new Array(25).fill(0n), pad=new Uint8Array(rate);
+  pad.set(bytes); pad[bytes.length]^=0x01; pad[rate-1]^=0x80;
+  for(let i=0;i<rate/8;i++){ let lane=0n; for(let j=7;j>=0;j--) lane=(lane<<8n)|BigInt(pad[i*8+j]); s[i]^=lane; }
+  _keccakf(s);
+  const out=new Uint8Array(32);
+  for(let i=0;i<4;i++){ let lane=s[i]; for(let j=0;j<8;j++){ out[i*8+j]=Number(lane&0xffn); lane>>=8n; } }
+  return [...out].map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+function toChecksum(addr){
+  const lower=String(addr||"").toLowerCase().replace(/^0x/,"");
+  if(lower.length!==40) return addr;
+  const h=keccak256(new TextEncoder().encode(lower));
+  let out="0x";
+  for(let i=0;i<40;i++) out += parseInt(h[i],16)>=8 ? lower[i].toUpperCase() : lower[i];
+  return out;
+}
+
+/* ---- Predict.fun GraphQL：钱包→用户名、conditionId→市场名/网站 ---- */
+const PREDICT_GRAPHQL = "https://graphql.predict.fun/graphql";
+let GQL_DISABLED = false;
+async function gql(query, variables){
+  if(GQL_DISABLED) return null;
+  const target = (SERVER.enabled) ? "/api/graphql" : PREDICT_GRAPHQL; // 直连常因 CORS 失败，建议用服务端代理
+  try{
+    const r = await fetch(target, { method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify({ query, variables }) });
+    const j = await r.json().catch(()=>null);
+    return j;
+  }catch(e){
+    if(!SERVER.enabled){ GQL_DISABLED = true; log("GraphQL 直连失败（CORS）：用户名/市场名需部署到 Vercel 走 /api/graphql。", "err"); }
+    return null;
+  }
+}
+const _acctCache = new Map();   // addr -> Promise<{name,referralCode}|null>
+function resolveAccount(addr){
+  if(!addr) return Promise.resolve(null);
+  const key = addr.toLowerCase();
+  if(_acctCache.has(key)) return _acctCache.get(key);
+  const p = gql(`query A($a:Address!){account(address:$a){name referralCode}}`, { a: toChecksum(addr) })
+    .then(j => (j && j.data && j.data.account) ? j.data.account : null)
+    .catch(()=>null);
+  _acctCache.set(key, p);
+  return p;
+}
+const _mktCache = new Map();     // conditionId -> Promise<{title,slug,url}|null>
+function resolveMarket(conditionId){
+  if(!conditionId) return Promise.resolve(null);
+  const id = conditionId.startsWith("0x") ? conditionId : "0x"+conditionId;
+  const key = id.toLowerCase();
+  if(_mktCache.has(key)) return _mktCache.get(key);
+  const p = gql(`query M($id:ID!){market(id:$id){id slug title}}`, { id })
+    .then(j => {
+      const m = j && j.data && j.data.market;
+      if(!m) return null;
+      return { title:m.title, slug:m.slug, url: m.slug ? `https://predict.fun/markets/${m.slug}` : null };
+    })
+    .catch(()=>null);
+  _mktCache.set(key, p);
+  return p;
+}
 
 // 把 18 位整数转成可读数字
 function fmt(big, dp=18, prec=6){
@@ -511,6 +594,7 @@ function parseReceipt(receipt, wallet){
     participants: new Set(),
     referrers: new Set(),
     walletReferrers: new Set(),
+    conditionId: null, // 用于反查市场名/网站
     role: null,        // maker / taker
   };
 
@@ -560,6 +644,11 @@ function parseReceipt(receipt, wallet){
     else if(t0===T.REFERRAL){
       const referrer = topicToAddr(lg.topics[1]);
       if(referrer) out.referrers.add(referrer);
+    }
+
+    // --- PositionSplit：取 conditionId（用于反查市场） ---
+    else if(t0===T.POSITION_SPLIT){
+      if(!out.conditionId && lg.topics[3]) out.conditionId = lg.topics[3];
     }
   }
 
@@ -649,7 +738,9 @@ async function run(){
         parsed.counterparties.forEach(c=>cpSet.add(c));
         parsed.walletReferrers.forEach(r=>refSet.add(r));
       }
-      tbody.appendChild(renderRow(it, parsed, wallet));
+      const tr = renderRow(it, parsed, wallet);
+      tbody.appendChild(tr);
+      enrichRow(tr, parsed); // 异步补用户名 / 市场名（Predict GraphQL）
     }
 
     // 3) 汇总卡片
@@ -682,15 +773,19 @@ async function run(){
  * ===================================================================== */
 function addrCell(a, cls){
   if(!a) return "—";
-  return `<span class="addr ${cls||''}">${short(a)}</span><span class="copy" onclick="copy('${a}')">⧉</span>`;
+  // .uname 占位：稍后由 enrichRow 用 Predict GraphQL 填入 @用户名
+  return `<span class="addr ${cls||''}">${short(a)}</span><span class="uname" data-addr="${a}"></span><span class="copy" onclick="copy('${a}')">⧉</span>`;
 }
 function renderRow(it, p, wallet){
   const tr = document.createElement("tr");
   const time = it.ts ? new Date(it.ts*1000).toLocaleString() : "—";
+  const cid = (p && p.conditionId) || "";
+  const mktTitle = it.market || "—";
 
   // 方向 & 份额 & 均价（从 receipt 推断）
   let dir="—", sharesTxt="—", priceTxt = it.avg_price ? Number(it.avg_price).toFixed(4) : "—";
-  let usdtTxt="—", feeTxt="—", roleTxt="—", marketTxt = it.market || "—";
+  let usdtTxt="—", feeTxt="—", roleTxt="—";
+  let tokenHint = "";
   let cpHtml = it.counterparty ? addrCell((""+it.counterparty).toLowerCase()) : "—";
   let refHtml = "—";
 
@@ -704,7 +799,7 @@ function renderRow(it, p, wallet){
       const net = val<0n ? -val : val;
       sharesTxt = fmt(net,18,3);
       dir = val>0n ? `<span class="tag buy">BUY</span>` : `<span class="tag sell">SELL</span>`;
-      marketTxt = (it.market||"") + `<div class="hint mono">#${id.slice(0,10)}…</div>`;
+      tokenHint = `<div class="hint mono">#${id.slice(0,10)}…</div>`;
       // 均价 = USDT / 份额
       const usdt = val>0n ? p.usdtIn : p.usdtOut;
       const shares = toNum(net), money = toNum(usdt);
@@ -722,6 +817,8 @@ function renderRow(it, p, wallet){
       }).join("<br>");
     }
   }
+  // .mkt 占位：稍后由 enrichRow 用 conditionId 反查市场名/网站
+  const marketTxt = `<span class="mkt" data-cid="${cid}">${mktTitle}</span>` + tokenHint;
 
   const tx = it.tx_hash;
   tr.innerHTML = `
@@ -738,6 +835,23 @@ function renderRow(it, p, wallet){
     <td><a href="https://bscscan.com/tx/${tx}" target="_blank">${short(tx)}↗</a></td>
   `;
   return tr;
+}
+
+// 用 Predict GraphQL 异步补：对手方/邀请人用户名 + 市场名/网站（失败则静默保留地址/标题）
+function enrichRow(tr, p){
+  tr.querySelectorAll(".uname[data-addr]").forEach(async el=>{
+    const acct = await resolveAccount(el.getAttribute("data-addr"));
+    if(acct && acct.name) el.textContent = " @"+acct.name;
+  });
+  const mktEl = tr.querySelector(".mkt");
+  const cid = mktEl && mktEl.getAttribute("data-cid");
+  if(cid && mktEl){
+    resolveMarket(cid).then(m=>{
+      if(!m) return;
+      const title = m.title || mktEl.textContent || "市场";
+      mktEl.innerHTML = m.url ? `<a href="${m.url}" target="_blank">${title} ↗</a>` : title;
+    });
+  }
 }
 
 /* =====================================================================
