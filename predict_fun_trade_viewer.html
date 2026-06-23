@@ -519,11 +519,19 @@ async function fetchJSON(url, opts){
   return { ok:r.ok, status:r.status, json:j, text:txt };
 }
 
+// BSC 浏览器 API 的“套餐不支持本链”错误（Etherscan 免费档不覆盖 BSC）
+function bscPlanError(json){
+  const m = json ? String(json.result || json.message || "") : "";
+  return /not supported for this chain|upgrade your api plan|Free API access/i.test(m)
+    ? "BSC API 免费档不支持 BSC："+m+" — 请把「链上解析方式」改为「BSC RPC」（免费）；邀请关系查询/扫链则需付费 key 或设 BSC_API_BASE 换接口。"
+    : null;
+}
 // 通过 Etherscan V2 拿 receipt logs
 async function getReceiptViaApi(txhash, key){
   const url = esUrl({ module:"proxy", action:"eth_getTransactionReceipt", txhash }, key);
   const { json } = await fetchJSON(url);
   if(!json) throw new Error("BSC API 无响应");
+  const plan = bscPlanError(json); if(plan) throw new Error(plan);
   if(json.error) throw new Error(json.error.message||"etherscan error");
   if(json.message && /rate|Invalid API Key/i.test(json.message)) throw new Error("BSC API: "+json.message);
   return json.result; // { logs, blockNumber, ... }
@@ -699,6 +707,7 @@ async function blockFromDays(days, key){
 // 通用 getLogs（topic-only，无地址过滤）
 async function esLogs(params, key){
   const { json } = await fetchJSON(esUrl({ module:"logs", action:"getLogs", toBlock:"latest", ...params }, key));
+  const plan = bscPlanError(json); if(plan) throw new Error(plan);
   if(json && json.message && /Invalid API Key|rate/i.test(json.message)) throw new Error("BSC API: "+json.message);
   return json && Array.isArray(json.result) ? json.result : [];
 }

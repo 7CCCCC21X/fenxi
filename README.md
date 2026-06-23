@@ -22,6 +22,7 @@
 | `PREDICT_GRAPHQL_AUTH` / `PREDICT_GRAPHQL_COOKIE` | Predict.fun GraphQL 登录态（个别字段需要时） | 选填 |
 | `BSC_RPC_URL` | BSC JSON-RPC 地址（用 RPC 解析时） | 选填 |
 | `OPINX_BASE` | 覆盖 OPinX 接口前缀，默认 `https://tool.opinx.app/api/predict/orders` | 选填 |
+| `BSC_API_BASE` | 覆盖 BSC 浏览器 API（默认 Etherscan V2）。Etherscan **免费档不覆盖 BSC**，看交易请改用 RPC；getLogs 类功能需付费 key 或换接口 | 选填 |
 
 > 设置/修改环境变量后需 **Redeploy** 才生效。
 
