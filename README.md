@@ -38,7 +38,14 @@
 - `GET /api/opinx` — 代理 OPinX，并带 `Origin: predalpha.xyz`，绕过其来源校验（浏览器 `fetch` 无法伪造该头，这也是直连常 404 的原因）。
 - `GET /api/predict` — 代理 Predict.fun，注入 `x-api-key`。
 - `POST /api/rpc` — 代理 BSC RPC（`BSC_RPC_URL`）。
-- `POST /api/graphql` — 代理 Predict.fun GraphQL（带 Origin/Referer），解析**对手方/邀请人用户名**（`account(address).name`）与**市场名/网站**（`market(id).slug`）。地址自动转 EIP-55 校验和（小写会返回 null）。
+- `POST /api/graphql` — 代理 Predict.fun GraphQL（带 Origin/Referer），解析**对手方/邀请人用户名**（`account(address).name`）、**市场名/网站**（`market(id).slug`）、以及**积分/持仓/PNL/排名**（`leaderboard.totalPoints`/`statistics.positionsValueUsd`/`pnlUsd`）。地址自动转 EIP-55 校验和（小写会返回 null）。
+- `GET /api/opinx-points` — 代理 OPinX 积分接口 `…/api/predict/points/{wallet}`（免 Key）。
+
+### 积分查询
+
+页面顶部「积分查询」卡片，或点击成交记录里的 `@用户名`，即可查该钱包的 OPINX 积分、Predict 积分/排名、持仓价值、PNL。
+- 表格里地址点击 → 跳转 `https://predict.fun/zh-cn/portfolio/<地址>`。
+- **持仓价值 / PNL** 这些字段常需登录态，若显示「—」，在 Vercel 设 `PREDICT_GRAPHQL_AUTH` 或 `PREDICT_GRAPHQL_COOKIE`（从浏览器登录 predict.fun 后的请求里复制）。
 
 ## 本地使用
 

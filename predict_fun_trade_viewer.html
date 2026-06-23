@@ -101,8 +101,15 @@
 
   .copy{cursor:pointer;color:var(--faint);font-size:11px;margin-left:5px;transition:color .12s}
   .copy:hover{color:var(--accent)}
-  .uname{color:#7fd1ff;font-weight:600;font-size:12px}
+  .uname,.uname-demo{color:#7fd1ff;font-weight:600;font-size:12px}
+  .uname[data-name]{cursor:pointer;text-decoration:underline dotted}
+  .uname[data-name]:hover{color:#aee2ff}
   .mkt a{color:#9fd0ff}
+  .pgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:4px}
+  .pcell{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:10px 13px}
+  .pcell b{display:block;font-size:17px;font-weight:700;margin-top:2px}
+  .pcell span{font-size:11px;color:var(--muted)}
+  .pos{color:var(--green)} .neg{color:var(--red)}
 
   #log{font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:pre-wrap;max-height:170px;overflow:auto;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}
   #log:empty::before{content:"等待运行…";color:var(--faint)}
@@ -195,6 +202,16 @@
       <button id="stop" class="secondary" disabled>停止</button>
       <span id="status" class="pill"></span>
     </div>
+  </div>
+
+  <!-- ============ 积分查询 ============ -->
+  <div class="card" id="pointsCard">
+    <div class="card-title">积分查询 · Points</div>
+    <div class="row" style="gap:10px">
+      <input id="pointsAddr" placeholder="0x… 钱包地址（也可点表格里的用户名）" style="flex:1;min-width:240px" />
+      <button id="pointsGo">查询积分</button>
+    </div>
+    <div id="pointsResult" class="hint" style="margin-top:12px">输入地址查询，或点击下方成交记录里的 <span class="uname-demo">@用户名</span> 自动查询其积分 / 持仓 / PNL。</div>
   </div>
 
   <!-- ============ 汇总 ============ -->
@@ -353,6 +370,36 @@ function resolveAccount(addr){
   _acctCache.set(key, p);
   return p;
 }
+// 积分 / 持仓 / PNL（参考 7CCCCC21X/yuce）：GetPortfolio
+function resolvePortfolio(addr){
+  if(!addr) return Promise.resolve(null);
+  return gql(`query P($a:Address!){account(address:$a){name referralCode pointsEarningRatio leaderboard{totalPoints rank} statistics{volumeUsd positionsValueUsd pnlUsd marketsCount}}}`,
+    { a: toChecksum(addr) })
+    .then(j => (j && j.data && j.data.account) ? j.data.account : null)
+    .catch(()=>null);
+}
+// OPINX 积分（免 Key）：https://tool.opinx.app/api/predict/points/{wallet}
+async function fetchOpinxPoints(addr){
+  const url = SERVER.enabled ? `/api/opinx-points?wallet=${addr}` : `https://tool.opinx.app/api/predict/points/${addr}`;
+  try{
+    const { ok, json } = await fetchJSON(url);
+    if(!ok || !json) return null;
+    // 容错地找一个“积分”数值
+    let pts = null;
+    const walk = n => {
+      if(pts!==null) return;
+      if(n && typeof n==="object"){
+        for(const [k,v] of Object.entries(n)){
+          if(typeof v==="number" && /point|score|积分/i.test(k)){ pts = v; return; }
+          walk(v);
+        }
+      }
+    };
+    walk(json);
+    return { points: pts, raw: json };
+  }catch(_){ return null; }
+}
+
 const _mktCache = new Map();     // conditionId -> Promise<{title,slug,url}|null>
 function resolveMarket(conditionId){
   if(!conditionId) return Promise.resolve(null);
@@ -771,10 +818,13 @@ async function run(){
 /* =====================================================================
  * 渲染一行
  * ===================================================================== */
+function portfolioUrl(a){ return `https://predict.fun/zh-cn/portfolio/${a}`; }
 function addrCell(a, cls){
   if(!a) return "—";
-  // .uname 占位：稍后由 enrichRow 用 Predict GraphQL 填入 @用户名
-  return `<span class="addr ${cls||''}">${short(a)}</span><span class="uname" data-addr="${a}"></span><span class="copy" onclick="copy('${a}')">⧉</span>`;
+  // 地址 → 跳 Predict portfolio；.uname 占位（enrichRow 填 @用户名，可点击查积分）；⧉ 复制
+  return `<a class="addr ${cls||''}" href="${portfolioUrl(a)}" target="_blank" title="打开 Predict portfolio">${short(a)}</a>`
+       + `<span class="uname" data-addr="${a}" title="点击查询积分"></span>`
+       + `<span class="copy" onclick="copy('${a}')">⧉</span>`;
 }
 function renderRow(it, p, wallet){
   const tr = document.createElement("tr");
@@ -841,7 +891,7 @@ function renderRow(it, p, wallet){
 function enrichRow(tr, p){
   tr.querySelectorAll(".uname[data-addr]").forEach(async el=>{
     const acct = await resolveAccount(el.getAttribute("data-addr"));
-    if(acct && acct.name) el.textContent = " @"+acct.name;
+    if(acct && acct.name){ el.textContent = " @"+acct.name; el.setAttribute("data-name", acct.name); }
   });
   const mktEl = tr.querySelector(".mkt");
   const cid = mktEl && mktEl.getAttribute("data-cid");
@@ -855,8 +905,48 @@ function enrichRow(tr, p){
 }
 
 /* =====================================================================
+ * 积分查询（参考 7CCCCC21X/yuce）：OPINX 积分 + Predict 持仓/PNL/排名
+ * ===================================================================== */
+const fmtUsd = v => (v===null||v===undefined||v==="") ? "—" : (Number(v)>=0?"$":"-$")+Math.abs(Number(v)).toLocaleString(undefined,{maximumFractionDigits:2});
+async function queryPoints(address){
+  const box = $("pointsResult");
+  if(!isAddr(address)){ box.innerHTML = `<span class="err">请输入合法地址</span>`; return; }
+  $("pointsAddr").value = address;
+  box.innerHTML = `<span class="pill busy">查询中…</span>`;
+  if(!SERVER.enabled && GQL_DISABLED) {/* 直连可能受限，仍尝试 */}
+  const [opinx, port] = await Promise.all([ fetchOpinxPoints(address), resolvePortfolio(address) ]);
+  const name = port && port.name ? "@"+port.name : short(address);
+  const lb = port && port.leaderboard || {};
+  const st = port && port.statistics || {};
+  const pnl = st.pnlUsd;
+  const cells = [
+    ["OPINX 积分", opinx && opinx.points!=null ? Number(opinx.points).toLocaleString() : "—"],
+    ["Predict 积分", lb.totalPoints!=null ? Number(lb.totalPoints).toLocaleString() : "—"],
+    ["排名", lb.rank!=null ? "#"+lb.rank : "—"],
+    ["持仓价值", fmtUsd(st.positionsValueUsd), ""],
+    ["PNL", fmtUsd(pnl), (pnl>0?"pos":pnl<0?"neg":"")],
+    ["交易量", fmtUsd(st.volumeUsd)],
+  ];
+  box.innerHTML =
+    `<div style="margin-bottom:8px">钱包 <a class="addr" href="${portfolioUrl(address)}" target="_blank">${name} ↗</a>`
+    + ` <span class="copy" onclick="copy('${address}')">⧉</span></div>`
+    + `<div class="pgrid">` + cells.map(([k,v,cls])=>`<div class="pcell"><span>${k}</span><b class="${cls||''}">${v}</b></div>`).join("") + `</div>`
+    + (!port ? `<div class="hint" style="margin-top:8px">持仓/PNL 为空：可能未连 <code>/api/graphql</code>，或这些字段需登录态（设 <code>PREDICT_GRAPHQL_AUTH</code>/<code>PREDICT_GRAPHQL_COOKIE</code>）。</div>` : "");
+}
+
+/* =====================================================================
  * 事件绑定
  * ===================================================================== */
+$("pointsGo").addEventListener("click", ()=>queryPoints($("pointsAddr").value.trim()));
+$("pointsAddr").addEventListener("keydown", e=>{ if(e.key==="Enter") queryPoints($("pointsAddr").value.trim()); });
+// 点击表格里的 @用户名 → 查该地址积分并滚到顶部面板
+$("tbody").addEventListener("click", e=>{
+  const u = e.target.closest(".uname[data-addr]");
+  if(!u) return;
+  const addr = u.getAttribute("data-addr");
+  queryPoints(addr);
+  $("pointsCard").scrollIntoView({ behavior:"smooth", block:"start" });
+});
 $("go").addEventListener("click", run);
 $("stop").addEventListener("click", ()=>{ aborted=true; setStatus("停止中…"); });
 $("wallet").addEventListener("keydown", e=>{ if(e.key==="Enter") run(); });
