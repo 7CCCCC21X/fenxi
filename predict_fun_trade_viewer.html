@@ -219,7 +219,7 @@
     <div class="card-title">邀请关系 · Referral</div>
     <div class="row" style="gap:10px">
       <input id="refAddr" placeholder="0x… 钱包 / 邀请人地址" style="flex:1;min-width:240px" />
-      <input id="refDays" type="number" value="30" min="1" max="365" title="回溯天数" style="width:96px" />
+      <input id="refDays" type="number" value="180" min="1" max="366" title="回溯天数（默认半年）" style="width:96px" />
       <button id="refUp" class="secondary">查邀请人 ↑</button>
       <button id="refDown">查下线 ↓</button>
     </div>
@@ -725,6 +725,26 @@ async function blockTip(){
   }
   return Number(bg(await rpcCall("eth_blockNumber", [])));
 }
+// 时间戳 → 区块：优先 BSC API 的 getblocknobytime，否则 RPC 二分（不依赖固定出块时间）
+async function rpcBlockTs(bn){ const b = await rpcCall("eth_getBlockByNumber", ["0x"+bn.toString(16), false]); return b ? Number(bg(b.timestamp)) : null; }
+async function blockFromTime(targetTs){
+  const key = currentBscKey();
+  if(_bscApiUsable!==false && ((SERVER.enabled&&SERVER.bsc)||key)){
+    try{
+      const { json } = await fetchJSON(esUrl({ module:"block", action:"getblocknobytime", timestamp:targetTs, closest:"before" }, key));
+      const plan = bscPlanError(json); if(plan){ _bscApiUsable=false; }
+      else if(json && /^\d+$/.test(String(json.result||""))){ _bscApiUsable=true; return Number(json.result); }
+    }catch(_){}
+  }
+  // RPC 二分查找（约 26 次请求）
+  let lo=1, hi=Number(bg(await rpcCall("eth_blockNumber", [])));
+  while(lo<hi){
+    const mid=(lo+hi)>>1; const ts=await rpcBlockTs(mid);
+    if(ts==null){ hi=mid-1; continue; }
+    if(ts<targetTs) lo=mid+1; else hi=mid;
+  }
+  return lo;
+}
 
 // 取一个区块窗口的日志：优先 BSC API（一次最多 1000 条），不可用则 RPC
 async function getLogsWindow(topics, from, to){
@@ -753,7 +773,7 @@ async function getLogsWindow(topics, from, to){
 
 // 分块扫描一段区间的日志（自适应缩小窗口）
 async function scanLogsRange(topics, fromBlock, toBlock, onProgress){
-  const out=[]; let size=5000, from=fromBlock;
+  const out=[]; let size=100000, from=fromBlock; // 窄 topic 过滤，宽区间通常一次即可；严格节点自动减半
   while(from<=toBlock){
     if(aborted) break;
     const to=Math.min(toBlock, from+size-1);
@@ -790,9 +810,9 @@ function inviteeFromReceipt(receipt){
 // 查某钱包的邀请人：从最新往回扫 FeeRefunded(to=wallet)，命中即取同 tx 的 referrer
 async function findReferrer(address, days, onProgress){
   const tip = await blockTip();
-  const fromBlock = Math.max(0, tip - days*28800); // BSC ~28800 块/天
+  const fromBlock = await blockFromTime(Math.floor(Date.now()/1000) - days*86400);
   const topics = [T.FEE_REFUNDED, null, padTopic(address)];
-  let size=5000, to=tip;
+  let size=100000, to=tip;
   while(to>=fromBlock){
     if(aborted) break;
     const from=Math.max(fromBlock, to-size+1);
@@ -816,12 +836,12 @@ async function findReferrer(address, days, onProgress){
 // 反查某邀请人邀请的用户：扫 ReferralFeeDistributed(referrer=address)，取每 tx 的 invitee
 async function findInvitees(address, days, onProgress){
   const tip = await blockTip();
-  const fromBlock = Math.max(0, tip - days*28800);
+  const fromBlock = await blockFromTime(Math.floor(Date.now()/1000) - days*86400);
   const topics = [T.REFERRAL, padTopic(address)];
   const logs = await scanLogsRange(topics, fromBlock, tip,
     (d,t,n)=>onProgress && onProgress("扫描日志", d, t, n));
   const txs = [...new Set(logs.map(l=>l.transactionHash.toLowerCase()))];
-  const invitees = new Map(); let done=0; const cap=200;
+  const invitees = new Map(); let done=0; const cap=400;
   for(const tx of txs){
     if(aborted || done>=cap) break;
     const u = inviteeFromReceipt(await getReceiptAny(tx));
