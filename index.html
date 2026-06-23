@@ -90,8 +90,8 @@
       <div>
         <label>链上解析方式 Enrich</label>
         <select id="enrich">
+          <option value="rpc" selected>BSC RPC（免 Key，推荐）</option>
           <option value="bscapi">BSC API（Etherscan V2）</option>
-          <option value="rpc">BSC RPC</option>
           <option value="none">不解析（只看来源数据）</option>
         </select>
       </div>
@@ -108,6 +108,7 @@
         <div>
           <label>BSC RPC URL（enrich 选 RPC 时使用）</label>
           <input id="rpcUrl" placeholder="https://bsc-dataseed.bnbchain.org" />
+          <div class="hint">备选：<code>https://bsc.publicnode.com</code> · <code>https://1rpc.io/bnb</code> · <code>https://bsc-dataseed.bnbchain.org</code><br>服务端配了 <code>BSC_RPC_URL</code> 时此框可留空（走 /api/rpc，无跨域、无 Key）</div>
         </div>
         <div>
           <label>Predict.fun API Key（来源选官方时需要）</label>
