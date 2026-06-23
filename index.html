@@ -413,17 +413,51 @@ async function fetchOpinxPoints(addr){
   }catch(_){ return null; }
 }
 
-const _mktCache = new Map();     // conditionId -> Promise<{title,slug,url}|null>
+// Predict 市场页 URL（参考 pp：/zh-cn/market/{slug}，无 slug 用 marketId 兜底）
+function marketUrl(slug, marketId){
+  if(slug) return `https://predict.fun/zh-cn/market/${encodeURIComponent(slug)}`;
+  if(marketId) return `https://predict.fun/zh-cn/market/${encodeURIComponent(marketId)}`;
+  return null;
+}
+// GraphQL 没有 conditionId→market 的直接查询，故分页拉 markets 建一次索引（缓存）
+let _mktIndexPromise = null;
+function buildMarketIndex(){
+  if(_mktIndexPromise) return _mktIndexPromise;
+  _mktIndexPromise = (async ()=>{
+    const idx = new Map(); // conditionId(lower) -> {title, slug, id}
+    // 先试带 slug 的查询；若 schema 不认 slug 字段则退回精简字段
+    const queries = [
+      `query AM($first:Int!,$after:String){markets(pagination:{first:$first,after:$after}){edges{node{id conditionId title slug}}pageInfo{hasNextPage endCursor}}}`,
+      `query AM($first:Int!,$after:String){markets(pagination:{first:$first,after:$after}){edges{node{id conditionId title}}pageInfo{hasNextPage endCursor}}}`,
+    ];
+    let qi = 0, after = null, pages = 0;
+    while(pages < 40){
+      const j = await gql(queries[qi], { first:100, after });
+      if(j && j.errors && qi===0){ qi = 1; after = null; pages = 0; continue; } // slug 不被支持 → 换精简查询重来
+      const conn = j && j.data && j.data.markets;
+      if(!conn) break;
+      for(const e of (conn.edges||[])){
+        const n = e.node; if(n && n.conditionId) idx.set(String(n.conditionId).toLowerCase(), { title:n.title, slug:n.slug, id:n.id });
+      }
+      if(!conn.pageInfo || !conn.pageInfo.hasNextPage) break;
+      after = conn.pageInfo.endCursor; pages++;
+    }
+    log(`市场索引：${idx.size} 个市场`);
+    return idx;
+  })();
+  return _mktIndexPromise;
+}
+const _mktCache = new Map();     // conditionId -> Promise<{title,url}|null>
 function resolveMarket(conditionId){
   if(!conditionId) return Promise.resolve(null);
   const id = conditionId.startsWith("0x") ? conditionId : "0x"+conditionId;
   const key = id.toLowerCase();
   if(_mktCache.has(key)) return _mktCache.get(key);
-  const p = gql(`query M($id:ID!){market(id:$id){id slug title}}`, { id })
-    .then(j => {
-      const m = j && j.data && j.data.market;
+  const p = buildMarketIndex()
+    .then(idx => {
+      const m = idx.get(key);
       if(!m) return null;
-      return { title:m.title, slug:m.slug, url: m.slug ? `https://predict.fun/markets/${m.slug}` : null };
+      return { title:m.title, url: marketUrl(m.slug, m.id) };
     })
     .catch(()=>null);
   _mktCache.set(key, p);
@@ -538,27 +572,36 @@ async function listFromOpinx(wallet, days, base){
     else if(status===403) hint = " — 被拒绝访问。请改用「BSC 直接扫链」来源。";
     throw new Error(`OPinX HTTP ${status}${hint}` + (text?(" | "+text.slice(0,120)):""));
   }
-  // 递归收集所有 fill，提取 tx_hash 与已知元数据
+  // 递归收集所有 fill。market_title/category_slug 在“市场”层，需沿路径继承给每个 fill
   const items = new Map(); // txhash -> meta
-  const walk = node => {
-    if(Array.isArray(node)){ node.forEach(walk); return; }
+  const walk = (node, ctx) => {
+    if(Array.isArray(node)){ node.forEach(n=>walk(n, ctx)); return; }
     if(node && typeof node==="object"){
+      // 更新市场上下文（遇到带 market 字段的节点就刷新，向下继承）
+      const c = {
+        market: node.market_title || node.marketTitle || (typeof node.market==="string"?node.market:null) || ctx.market,
+        slug:   node.category_slug || node.categorySlug || node.slug || ctx.slug,
+        marketId: node.market_id || node.marketId || node.conditionId || ctx.marketId,
+        outcome: node.outcome || ctx.outcome,
+      };
       const tx = node.tx_hash || node.txHash || node.transactionHash || node.transaction_hash;
       if(tx && /^0x[0-9a-fA-F]{64}$/.test(tx)){
         const prev = items.get(tx.toLowerCase()) || {};
         items.set(tx.toLowerCase(), {
           tx_hash: tx,
           ts: node.ts || node.timestamp || node.block_timestamp || node.executed_at || prev.ts,
-          market: node.market_title || node.market || node.marketTitle || prev.market,
-          outcome: node.outcome || prev.outcome,
+          market: c.market || prev.market,
+          slug: c.slug || prev.slug,
+          marketId: c.marketId || prev.marketId,
+          outcome: c.outcome || prev.outcome,
           counterparty: node.counterparty || prev.counterparty,
           avg_price: node.avg_price || node.priceExecuted || prev.avg_price,
         });
       }
-      Object.values(node).forEach(walk);
+      Object.values(node).forEach(v=>walk(v, c));
     }
   };
-  walk(json);
+  walk(json, {});
   log(`OPinX 命中 ${items.size} 笔 tx`);
   return [...items.values()];
 }
@@ -588,7 +631,8 @@ async function listFromPredict(wallet, days, key){
       const tx = m.transactionHash;
       if(tx) out.set(tx.toLowerCase(), {
         tx_hash: tx, ts: Math.floor(ms/1000),
-        market: m.market?.title, avg_price: m.priceExecuted,
+        market: m.market?.title, slug: m.market?.slug || m.market?.categorySlug,
+        marketId: m.market?.id, avg_price: m.priceExecuted,
       });
     }
     pages++;
@@ -941,8 +985,16 @@ function renderRow(it, p, wallet){
       }).join("<br>");
     }
   }
-  // .mkt 占位：稍后由 enrichRow 用 conditionId 反查市场名/网站
-  const marketTxt = `<span class="mkt" data-cid="${cid}">${mktTitle}</span>` + tokenHint;
+  // 市场名/链接：优先用来源(OPinX/官方)已带的 title+slug，直接出链接；
+  // 没有 title 时留 .mkt 占位，由 enrichRow 用 conditionId 走 GraphQL 索引补。
+  const srcUrl = marketUrl(it.slug, it.marketId);
+  let marketCell;
+  if(it.market){
+    marketCell = srcUrl ? `<a href="${srcUrl}" target="_blank">${it.market} ↗</a>` : `${it.market}`;
+  }else{
+    marketCell = `<span class="mkt" data-cid="${cid}">解析中…</span>`;
+  }
+  const marketTxt = marketCell + tokenHint;
 
   const tx = it.tx_hash;
   tr.innerHTML = `
@@ -969,11 +1021,15 @@ function enrichRow(tr, p){
   });
   const mktEl = tr.querySelector(".mkt");
   const cid = mktEl && mktEl.getAttribute("data-cid");
-  if(cid && mktEl){
+  if(mktEl){
+    if(!cid){ mktEl.textContent = "—"; return; }
     resolveMarket(cid).then(m=>{
-      if(!m) return;
-      const title = m.title || mktEl.textContent || "市场";
-      mktEl.innerHTML = m.url ? `<a href="${m.url}" target="_blank">${title} ↗</a>` : title;
+      if(m && m.title){
+        mktEl.innerHTML = m.url ? `<a href="${m.url}" target="_blank">${m.title} ↗</a>` : m.title;
+      }else{
+        // 索引里没匹配到：退而显示 conditionId 短码 + bscscan 链接
+        mktEl.innerHTML = `<span class="hint mono">cond ${cid.slice(0,10)}…</span>`;
+      }
     });
   }
 }
