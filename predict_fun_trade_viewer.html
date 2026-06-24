@@ -1734,12 +1734,10 @@ function renderDedupRows(visible){
       + `<td data-label="邀请人">—</td>`
       + `<td data-label="Tx"><b>${m.count}</b> 笔</td>`;
     tbody.appendChild(tr);
-    // 用户名 + 已缓存的对手方邀请人
-    enrichRow(tr, null);
-    const ref = _cpRefCache.get(m.addr), el = tr.querySelector(".cpref");
-    if(el && _cpRefCache.has(m.addr)) el.innerHTML = ref ? `<span class="hint">↑邀请人 ${personHtml(ref)}</span>` : `<span class="hint">↑邀请人：未找到</span>`;
+    enrichRow(tr, null);  // 对手方用户名
   }
   $("rowCount").textContent = `${rows.length} 个对手方（去重自 ${visible.length} 笔）`;
+  autoResolveCpReferrers(RUN_ID, LAST_ENRICH!=="none"); // 解析/填充对手方邀请人（含未缓存的，会显示未找到）
 }
 function updateSortArrows(){
   document.querySelectorAll("th[data-sort]").forEach(th=>{
