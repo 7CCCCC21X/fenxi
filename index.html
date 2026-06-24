@@ -286,6 +286,11 @@
           <label for="opinxBase">OPinX 接口前缀</label>
           <input id="opinxBase" value="https://tool.opinx.app/api/predict/trades" />
         </div>
+        <div class="fld" data-need="rpcUrl">
+          <label for="logWindow">getLogs 窗口（区块数）</label>
+          <input id="logWindow" type="number" value="49000" min="1000" max="5000000" />
+          <div class="hint">节点拒绝整段查询时的回退窗口。节点上限大可调大（如 100000）以减少请求数</div>
+        </div>
       </div>
     </details>
 
@@ -866,6 +871,7 @@ async function listFromBsc(wallet, days, key){
 const padTopic = a => "0x" + a.slice(2).toLowerCase().padStart(64,"0");
 function currentBscKey(){ return ($("bscKey").value||"").trim(); }
 function rpcUrlVal(){ return ($("rpcUrl").value||"").trim() || "https://bsc-dataseed.bnbchain.org"; }
+function maxLogWindow(){ const el=document.getElementById("logWindow"); return Math.max(1000, Number(el&&el.value)||49000); }
 // RPC 兜底始终可用（默认公共节点）；BSC API 仅作快路
 function referralReady(){ return true; }
 
@@ -945,7 +951,8 @@ async function getLogsWindow(topics, from, to, address){
 async function scanLogsRange(topics, fromBlock, toBlock, onProgress, address, opts){
   opts = opts || {};
   const out=[]; let size = Math.max(1, toBlock - fromBlock + 1);
-  const shrink = e => { if(!isRangeErr(e)) throw e; if(size>49000) size=49000; else if(size>2000) size=Math.floor(size/2); else throw e; };
+  const W = maxLogWindow();
+  const shrink = e => { if(!isRangeErr(e)) throw e; if(size>W) size=W; else if(size>2000) size=Math.floor(size/2); else throw e; };
   if(opts.backward){
     // 倒序扫描：找到第一条记录之前不停（否则活动较早时会误判为“无”）；
     // 命中后再遇连续空段才停（快速模式：只是跳过活动簇之后的更早空白）。
@@ -1032,7 +1039,7 @@ async function findReferrer(address, days, onProgress){
       const from = Math.max(fromBlock, to - size + 1);
       let part;
       try{ part = await getLogsWindow(topics, from, to, mod); }
-      catch(e){ if(isRangeErr(e)){ if(size>49000) size=49000; else if(size>2000) size=Math.floor(size/2); else throw e; continue; } throw e; }
+      catch(e){ if(isRangeErr(e)){ const W=maxLogWindow(); if(size>W) size=W; else if(size>2000) size=Math.floor(size/2); else throw e; continue; } throw e; }
       part.sort((a,b)=> Number(bg(b.blockNumber)) - Number(bg(a.blockNumber))); // 窗口内最新优先
       for(const lg of part){ if(word(lg.data,2)>0n){ cands.push(lg); if(cands.length>=NEED) break; } }
       if(from===fromBlock && to===tip) break; // 整段一次拿完
