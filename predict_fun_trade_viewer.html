@@ -328,15 +328,17 @@
         <button class="secondary" id="exportCsv">导出 CSV</button>
       </div>
     </div>
+    <div id="tableNote" class="banner info" style="display:none;margin-bottom:12px"></div>
     <div class="scroll">
       <table id="resultTable">
         <caption class="sr-only">钱包成交记录：时间、市场、角色、方向、金额、份额、均价、手续费、对手方、邀请人、交易哈希</caption>
         <thead>
           <tr>
-            <th data-sort="ts">时间</th><th>市场 / Token</th><th>角色</th><th>方向</th>
-            <th data-sort="usdt">稳定币 (USDT)</th><th data-sort="shares">份额</th>
-            <th data-sort="price">均价</th><th data-sort="fee">净手续费</th>
-            <th>对手方</th><th>邀请人</th><th>Tx</th>
+            <th data-col="时间" data-sort="ts">时间</th><th data-col="市场">市场 / Token</th>
+            <th data-col="角色">角色</th><th data-col="方向">方向</th>
+            <th data-col="USDT" data-sort="usdt">稳定币 (USDT)</th><th data-col="份额" data-sort="shares">份额</th>
+            <th data-col="均价" data-sort="price">均价</th><th data-col="净手续费" data-sort="fee">净手续费</th>
+            <th data-col="对手方">对手方</th><th data-col="邀请人">邀请人</th><th data-col="Tx">Tx</th>
           </tr>
         </thead>
         <tbody id="tbody">
@@ -1119,6 +1121,8 @@ async function run(){
   const tbody = $("tbody"); tbody.innerHTML = "";
   $("summaryCard").style.display = "none";
   $("toolbar").style.display = "none"; $("rowCount").textContent = "";
+  $("tableNote").style.display = "none";
+  HIDEABLE_COLS.forEach(c=>setColVisible(c.label, true)); // 复位列可见性
   RESULTS = [];
   setProgress(0, 0);
 
@@ -1187,7 +1191,7 @@ async function run(){
       RESULTS.push(tr);
       enrichRow(tr, parsed); // 异步补用户名 / 市场名（Predict GraphQL）
     }
-    if(RESULTS.length){ $("toolbar").style.display = "flex"; populateMarketFilter(); applyTableView(); }
+    if(RESULTS.length){ $("toolbar").style.display = "flex"; populateMarketFilter(); applyTableView(); autoHideEmptyColumns(enrich); }
 
     // 3) 汇总卡片
     $("summaryCard").style.display = "";
@@ -1354,7 +1358,7 @@ function enrichRow(tr, p){
     resolveMarket(cid).then(m=>{
       if(m && m.title){
         mktEl.innerHTML = m.url ? `<a href="${m.url}" target="_blank">${m.title} ↗</a>` : m.title;
-        if(tr._rec){ tr._rec.market = m.title; populateMarketFilter(); } // 让市场筛选下拉补上
+        if(tr._rec){ tr._rec.market = m.title; setColVisible("市场", true); populateMarketFilter(); } // 补市场列与筛选下拉
       }else{
         // 索引里没匹配到：退而显示 conditionId 短码 + bscscan 链接
         mktEl.innerHTML = `<span class="hint mono">cond ${cid.slice(0,10)}…</span>`;
@@ -1515,6 +1519,40 @@ document.querySelectorAll(".tab").forEach(t=> t.addEventListener("click", ()=>{
 
 /* ---- 结果表 筛选 / 排序 / 导出 ---- */
 let SORT = { key:"ts", dir:-1 };
+// 隐藏全空的列（快速模式下没有解析的列就不显示，避免一排“—”）
+const HIDEABLE_COLS = [
+  {label:"市场", empty:r=>!r.market},
+  {label:"角色", empty:r=>!r.role},
+  {label:"方向", empty:r=>!r.dir},
+  {label:"USDT", empty:r=>r.usdt==null},
+  {label:"份额", empty:r=>r.shares==null},
+  {label:"均价", empty:r=>r.price==null},
+  {label:"净手续费", empty:r=>r.fee==null},
+  {label:"邀请人", empty:r=>!(r.referrers&&r.referrers.length)},
+];
+function setColVisible(label, visible){
+  document.querySelectorAll(`#resultTable th[data-col="${label}"]`).forEach(e=>e.style.display=visible?"":"none");
+  document.querySelectorAll(`#resultTable td[data-label="${label}"]`).forEach(e=>e.style.display=visible?"":"none");
+}
+function autoHideEmptyColumns(enrich){
+  let hidCount = 0;
+  HIDEABLE_COLS.forEach(c=>{
+    const allEmpty = RESULTS.length>0 && RESULTS.every(tr=> c.empty(tr._rec||{}));
+    setColVisible(c.label, !allEmpty);
+    if(allEmpty) hidCount++;
+  });
+  // 快速模式（未解析）给出补全提示
+  const note = $("tableNote");
+  if(enrich==="none" && hidCount>0){
+    note.style.display = "";
+    note.innerHTML = `⚡ 当前为「快速查询」，只列出了交易，未解析金额 / 方向 / 手续费 / 邀请人。`
+      + ` <button class="lnk" style="background:none;border:none;padding:0;font-weight:700" id="toPrecise">→ 用「精准解析」重新查询</button>`;
+    const b = document.getElementById("toPrecise");
+    if(b) b.onclick = ()=>{ applyMode("precise"); $("tableNote").style.display="none"; run(); };
+  } else {
+    note.style.display = "none";
+  }
+}
 function populateMarketFilter(){
   const sel = $("filterMarket"); if(!sel) return;
   const cur = sel.value;
