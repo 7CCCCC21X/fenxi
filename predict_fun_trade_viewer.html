@@ -11,26 +11,36 @@
     --text:#e8eef6; --muted:#93a1b5; --faint:#6b7888;
     --accent:#4d8dff; --accent2:#7c5cff; --green:#46d07f; --red:#ff6b6b;
     --yellow:#e2b13c; --purple:#a98bff;
+    --thead:#10151e; --headerbg:rgba(10,13,19,.78); --glow1:rgba(124,92,255,.10); --glow2:rgba(77,141,255,.10);
     --mono:'SFMono-Regular',ui-monospace,Consolas,Menlo,monospace;
     --shadow:0 6px 24px rgba(0,0,0,.35);
+  }
+  :root[data-theme="light"]{
+    --bg:#f5f8fc; --bg2:#eef2f8; --panel:#ffffff; --panel2:#f4f7fb; --panel3:#e7eef6;
+    --border:#dde4ee; --border2:#cbd6e4;
+    --text:#16202e; --muted:#566576; --faint:#8493a6;
+    --thead:#eef3f9; --headerbg:rgba(255,255,255,.82); --glow1:rgba(124,92,255,.07); --glow2:rgba(77,141,255,.08);
+    --shadow:0 6px 20px rgba(30,50,90,.08);
   }
   *{box-sizing:border-box}
   ::selection{background:rgba(77,141,255,.3)}
   body{margin:0;background:
-      radial-gradient(900px 500px at 100% -5%,rgba(124,92,255,.10),transparent 60%),
-      radial-gradient(900px 500px at -5% 0,rgba(77,141,255,.10),transparent 55%),
+      radial-gradient(900px 500px at 100% -5%,var(--glow1),transparent 60%),
+      radial-gradient(900px 500px at -5% 0,var(--glow2),transparent 55%),
       var(--bg);
     color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
 
   header{position:sticky;top:0;z-index:20;padding:14px 22px;border-bottom:1px solid var(--border);
-    background:rgba(10,13,19,.78);backdrop-filter:blur(12px);display:flex;align-items:center;gap:14px}
+    background:var(--headerbg);backdrop-filter:blur(12px);display:flex;align-items:center;gap:14px}
   .logo{width:34px;height:34px;border-radius:9px;flex:0 0 auto;
     background:linear-gradient(135deg,var(--accent),var(--accent2));
     display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:16px;box-shadow:0 4px 14px rgba(77,141,255,.4)}
   header h1{margin:0;font-size:16px;font-weight:700;letter-spacing:.2px}
   header p{margin:2px 0 0;color:var(--muted);font-size:12px}
-  .badge-chain{margin-left:auto;font-size:11px;font-weight:700;color:#ffd76b;
+  .badge-chain{font-size:11px;font-weight:700;color:#caa53a;
     background:rgba(240,185,11,.12);border:1px solid rgba(240,185,11,.35);padding:4px 10px;border-radius:999px;white-space:nowrap}
+  .theme-btn{margin-left:auto;width:34px;height:34px;border-radius:9px;border:1px solid var(--border2);background:var(--panel2);color:var(--text);font-size:15px;cursor:pointer;box-shadow:none;padding:0;flex:0 0 auto}
+  .theme-btn:hover{filter:none;background:var(--panel3)}
 
   .wrap{max-width:1320px;margin:0 auto;padding:22px}
   .card{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:var(--shadow)}
@@ -39,10 +49,11 @@
 
   .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
   label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:6px;font-weight:500}
-  input,select{width:100%;padding:10px 12px;background:var(--panel2);border:1px solid var(--border2);border-radius:9px;color:var(--text);font-size:13px;font-family:inherit;transition:border-color .15s,box-shadow .15s}
-  input::placeholder{color:var(--faint)}
-  input:hover,select:hover{border-color:#3b485e}
-  input:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(77,141,255,.18)}
+  input,select,textarea{width:100%;padding:10px 12px;background:var(--panel2);border:1px solid var(--border2);border-radius:9px;color:var(--text);font-size:13px;font-family:inherit;transition:border-color .15s,box-shadow .15s}
+  input::placeholder,textarea::placeholder{color:var(--faint)}
+  input:hover,select:hover,textarea:hover{border-color:#3b485e}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(77,141,255,.18)}
+  textarea{font-family:var(--mono);font-size:12.5px;line-height:1.6}
   select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%2393a1b5' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px}
 
   .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -86,7 +97,10 @@
   table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
   th,td{text-align:left;padding:11px 13px;vertical-align:top;white-space:nowrap}
   td{border-top:1px solid var(--border)}
-  th{color:var(--muted);font-weight:700;font-size:11.5px;letter-spacing:.4px;position:sticky;top:0;z-index:1;background:#10151e;backdrop-filter:blur(4px)}
+  th{color:var(--muted);font-weight:700;font-size:11.5px;letter-spacing:.4px;position:sticky;top:0;z-index:1;background:var(--thead);backdrop-filter:blur(4px)}
+  th[data-sort]{cursor:pointer;user-select:none}
+  th[data-sort]:hover{color:var(--text)}
+  th .arrow{opacity:.5;font-size:9px}
   tbody tr{transition:background .12s}
   tbody tr:nth-child(even) td{background:rgba(255,255,255,.012)}
   tbody tr:hover td{background:rgba(77,141,255,.07)}
@@ -187,7 +201,8 @@
     <h1>Predict.fun 交易查看器 — 对手方 &amp; 邀请人</h1>
     <p>交易列表来自 OPinX / Predict.fun，链上 receipt 用 BSC RPC / API 解析对手方与邀请人</p>
   </div>
-  <span class="badge-chain">● BNB Smart Chain · 56</span>
+  <span class="badge-chain" style="margin-left:auto">● BNB Smart Chain · 56</span>
+  <button id="themeBtn" class="theme-btn" title="切换深色 / 浅色" aria-label="切换主题">🌙</button>
 </header>
 
 <div class="wrap">
@@ -314,8 +329,9 @@
         <caption class="sr-only">钱包成交记录：时间、市场、角色、方向、金额、份额、均价、手续费、对手方、邀请人、交易哈希</caption>
         <thead>
           <tr>
-            <th>时间</th><th>市场 / Token</th><th>角色</th><th>方向</th>
-            <th>稳定币 (USDT)</th><th>份额</th><th>均价</th><th>净手续费</th>
+            <th data-sort="ts">时间</th><th>市场 / Token</th><th>角色</th><th>方向</th>
+            <th data-sort="usdt">稳定币 (USDT)</th><th data-sort="shares">份额</th>
+            <th data-sort="price">均价</th><th data-sort="fee">净手续费</th>
             <th>对手方</th><th>邀请人</th><th>Tx</th>
           </tr>
         </thead>
@@ -356,13 +372,13 @@
   <div class="tab-panel" data-panel="referral" style="display:none">
     <div class="card" id="referralCard">
       <div class="card-title">邀请关系 · Referral</div>
-      <div class="row" style="gap:10px">
-        <input id="refAddr" placeholder="0x… 钱包 / 邀请人地址" style="flex:1;min-width:240px" />
-        <input id="refDays" type="number" value="180" min="1" max="366" title="回溯天数（默认半年）" style="width:96px" />
+      <textarea id="refAddr" rows="2" placeholder="0x… 钱包 / 邀请人地址；支持批量：每行一个，或用空格 / 逗号分隔" style="width:100%;resize:vertical"></textarea>
+      <div class="row" style="gap:10px;margin-top:10px">
+        <input id="refDays" type="number" value="180" min="1" max="366" title="回溯天数（默认半年）" style="width:110px" />
         <button id="refUp" class="secondary">查邀请人 ↑</button>
         <button id="refDown">查下线 ↓</button>
       </div>
-      <div class="hint" style="margin-top:6px">「查邀请人」= 谁邀请了该钱包；「查下线」= 该地址邀请了哪些用户。链上解析：有 BSC API Key 走 API（快），否则自动用 <b>RPC 分块扫描</b>（免费，较慢）。</div>
+      <div class="hint" style="margin-top:6px">「查邀请人」= 谁邀请了这些钱包；「查下线」= 这些地址各自邀请了哪些用户。<b>支持批量</b>（多地址逐个处理）。链上解析：有 BSC API Key 走 API（快），否则自动 <b>RPC 扫描</b>（免费，较慢）。</div>
       <div id="refResult" style="margin-top:12px"></div>
     </div>
   </div>
@@ -1067,6 +1083,8 @@ async function run(){
   const rpcUrl = $("rpcUrl").value.trim() || "https://bsc-dataseed.bnbchain.org";
   const predictKey = $("predictKey").value.trim();
   const opinxBase = $("opinxBase").value.trim();
+  // 记住非敏感选择
+  try{ LS.set("wallet",wallet); LS.set("days",String(days)); LS.set("source",source); LS.set("enrich",enrich); }catch(_){}
 
   $("go").disabled = true; $("stop").disabled = false;
   const tbody = $("tbody"); tbody.innerHTML = "";
@@ -1085,7 +1103,7 @@ async function run(){
     }
 
     // 1) 取交易列表
-    setStatus("获取交易列表…");
+    setStatus("① 拉取交易列表…");
     let items = [];
     if(source==="opinx")   items = await listFromOpinx(wallet, days, opinxBase);
     else if(source==="predict") items = await listFromPredict(wallet, days, predictKey);
@@ -1107,7 +1125,7 @@ async function run(){
     for(const it of items){
       if(aborted){ log("已停止","err"); break; }
       done++;
-      setStatus(enrich==="none" ? `展示 ${done}/${items.length} …` : `解析 ${done}/${items.length} …`);
+      setStatus(enrich==="none" ? `② 展示 ${done}/${items.length} …` : `② 解析链上 receipt ${done}/${items.length} …`);
       setProgress(done, items.length);
 
       let parsed = null;
@@ -1361,40 +1379,72 @@ function fillRefNames(container){
     if(acct && acct.name){ el.textContent = " @"+acct.name; el.setAttribute("data-name", acct.name); }
   });
 }
+const parseAddrs = s => [...new Set((String(s).match(/0x[a-fA-F0-9]{40}/g)||[]).map(x=>x.toLowerCase()))];
+function refDaysVal(){ return Math.max(1, Number($("refDays").value)||30); }
+
 async function doFindReferrer(){
   const box = $("refResult");
-  const addr = $("refAddr").value.trim();
-  if(!isAddr(addr)){ box.innerHTML = `<span class="err">请输入合法地址</span>`; return; }
-  aborted = false;
-  const days = Math.max(1, Number($("refDays").value)||30);
-  box.innerHTML = `<span class="pill busy">查邀请人中…（回溯 ${days} 天）</span>`;
+  const addrs = parseAddrs($("refAddr").value);
+  if(addrs.length===0){ box.innerHTML = `<span class="err">请输入至少一个合法地址</span>`; return; }
+  aborted = false; const days = refDaysVal();
   try{
-    const r = await findReferrer(addr, days,
-      (scanned,total)=>{ box.innerHTML = `<span class="pill busy">查邀请人中…（已回溯 ${Math.round(scanned/Math.max(total,1)*100)}%）</span>`; });
-    if(!r){ box.innerHTML = `<div class="hint">未找到邀请人（该钱包在最近 ${days} 天可能没有产生过邀请返佣，或邀请发生更早，请加大天数）。</div>`; return; }
-    box.innerHTML = `<div>该钱包的邀请人：<b>${personHtml(r.referrer, ` <a class="addr" href="https://bscscan.com/tx/${r.tx}" target="_blank">tx↗</a>`)}</b></div>`;
+    if(addrs.length===1){
+      box.innerHTML = `<span class="pill busy">查邀请人中…（回溯 ${days} 天）</span>`;
+      const r = await findReferrer(addrs[0], days,
+        (s,t)=>{ box.innerHTML = `<span class="pill busy">查邀请人中…（已回溯 ${Math.round(s/Math.max(t,1)*100)}%）</span>`; });
+      box.innerHTML = r
+        ? `<div>该钱包的邀请人：<b>${personHtml(r.referrer, ` <a class="addr" href="https://bscscan.com/tx/${r.tx}" target="_blank">tx↗</a>`)}</b></div>`
+        : `<div class="hint">未找到邀请人（最近 ${days} 天无邀请返佣，或邀请更早，请加大天数）。</div>`;
+      fillRefNames(box); return;
+    }
+    // 批量
+    const rows = [];
+    for(let i=0;i<addrs.length;i++){
+      if(aborted) break;
+      box.innerHTML = `<span class="pill busy">批量查邀请人 ${i+1}/${addrs.length}…</span>`;
+      let r=null; try{ r = await findReferrer(addrs[i], days); }catch(e){ r = {error:e.message}; }
+      rows.push([addrs[i], r]);
+    }
+    box.innerHTML =
+      `<div style="margin-bottom:8px">批量查邀请人（${rows.length}/${addrs.length} 个地址）：</div>`
+      + `<div class="scroll" style="max-height:46vh"><table><thead><tr><th>#</th><th>钱包</th><th>邀请人</th></tr></thead><tbody>`
+      + rows.map(([a,r],i)=>`<tr><td>${i+1}</td><td>${personHtml(a)}</td><td>${r&&r.referrer?personHtml(r.referrer):(r&&r.error?`<span class="err">${r.error}</span>`:"—")}</td></tr>`).join("")
+      + `</tbody></table></div>`;
     fillRefNames(box);
   }catch(e){ box.innerHTML = `<span class="err">${e.message}</span>`; }
 }
 async function doFindInvitees(){
   const box = $("refResult");
-  const addr = $("refAddr").value.trim();
-  if(!isAddr(addr)){ box.innerHTML = `<span class="err">请输入合法地址</span>`; return; }
-  aborted = false;
-  const days = Math.max(1, Number($("refDays").value)||30);
-  box.innerHTML = `<span class="pill busy">查下线中…（回溯 ${days} 天）</span>`;
-  try{
-    const { invitees, scanned, total, capped } = await findInvitees(addr, days,
-      (label,d,t,n)=>{ box.innerHTML = `<span class="pill busy">${label} ${d}/${t}${n!=null?`，已发现 ${n} 个下线`:""}…</span>`; });
-    if(invitees.size===0){ box.innerHTML = `<div class="hint">未发现下线（最近 ${days} 天该地址没有作为邀请人收到返佣）。</div>`; return; }
+  const addrs = parseAddrs($("refAddr").value);
+  if(addrs.length===0){ box.innerHTML = `<span class="err">请输入至少一个合法地址</span>`; return; }
+  aborted = false; const days = refDaysVal();
+  const renderOne = (addr, invitees, scanned, total, capped) => {
     const rows = [...invitees.entries()].sort((a,b)=>b[1].count-a[1].count);
-    box.innerHTML =
-      `<div style="margin-bottom:8px">邀请人 ${personHtml(addr)} 共邀请 <b>${invitees.size}</b> 个用户`
-      + `（扫描 ${scanned}/${total} 笔返佣${capped?"，已截断":""}）：</div>`
+    if(invitees.size===0) return `<div class="hint" style="margin:6px 0">${personHtml(addr)}：未发现下线（最近 ${days} 天无返佣）。</div>`;
+    return `<div style="margin:10px 0 6px">邀请人 ${personHtml(addr)} 共邀请 <b>${invitees.size}</b> 个用户（扫描 ${scanned}/${total} 笔${capped?"，已截断":""}）：</div>`
       + `<div class="scroll" style="max-height:40vh"><table><thead><tr><th>#</th><th>下线用户</th><th>返佣笔数</th></tr></thead><tbody>`
       + rows.map(([a,info],i)=>`<tr><td>${i+1}</td><td>${personHtml(a)}</td><td class="num">${info.count}</td></tr>`).join("")
       + `</tbody></table></div>`;
-    fillRefNames(box);
+  };
+  try{
+    if(addrs.length===1){
+      box.innerHTML = `<span class="pill busy">查下线中…（回溯 ${days} 天）</span>`;
+      const { invitees, scanned, total, capped } = await findInvitees(addrs[0], days,
+        (label,d,t,n)=>{ box.innerHTML = `<span class="pill busy">${label} ${d}/${t}${n!=null?`，已发现 ${n} 个下线`:""}…</span>`; });
+      box.innerHTML = renderOne(addrs[0], invitees, scanned, total, capped);
+      fillRefNames(box); return;
+    }
+    // 批量
+    let html = "";
+    for(let i=0;i<addrs.length;i++){
+      if(aborted) break;
+      box.innerHTML = html + `<span class="pill busy">批量查下线 ${i+1}/${addrs.length}（${short(addrs[i])}）…</span>`;
+      try{
+        const { invitees, scanned, total, capped } = await findInvitees(addrs[i], days);
+        html += renderOne(addrs[i], invitees, scanned, total, capped);
+      }catch(e){ html += `<div class="err" style="margin:6px 0">${short(addrs[i])}: ${e.message}</div>`; }
+      box.innerHTML = html; fillRefNames(box);
+    }
   }catch(e){ box.innerHTML = `<span class="err">${e.message}</span>`; }
 }
 
@@ -1433,10 +1483,10 @@ document.querySelectorAll(".tab").forEach(t=> t.addEventListener("click", ()=>{
 }));
 
 /* ---- 结果表 筛选 / 排序 / 导出 ---- */
+let SORT = { key:"ts", dir:-1 };
 function applyTableView(){
   const q = ($("tableSearch").value||"").trim().toLowerCase();
   const fDir = $("filterDir").value, fRole = $("filterRole").value, fRef = $("filterRef").checked;
-  const sortKey = $("sortBy").value;
   const tbody = $("tbody");
   let shown = 0;
   const visible = [];
@@ -1453,20 +1503,33 @@ function applyTableView(){
     tr.style.display = ok ? "" : "none";
     if(ok){ shown++; visible.push(tr); }
   }
-  // 排序（可见行重排到 DOM）
-  const dir = -1; // 降序
   visible.sort((a,b)=>{
-    const x=a._rec||{}, y=b._rec||{};
-    const va = x[sortKey]==null?-Infinity:x[sortKey], vb = y[sortKey]==null?-Infinity:y[sortKey];
-    return (va-vb)*dir;
+    const va = (a._rec||{})[SORT.key], vb = (b._rec||{})[SORT.key];
+    const na = va==null?-Infinity:va, nb = vb==null?-Infinity:vb;
+    return (na<nb?-1:na>nb?1:0)*SORT.dir;
   });
   visible.forEach(tr=>tbody.appendChild(tr));
   $("rowCount").textContent = shown===RESULTS.length ? `${RESULTS.length} 笔` : `${shown}/${RESULTS.length} 笔`;
+  updateSortArrows();
 }
-["tableSearch","filterDir","filterRole","filterRef","sortBy"].forEach(id=>{
+function updateSortArrows(){
+  document.querySelectorAll("th[data-sort]").forEach(th=>{
+    const k = th.getAttribute("data-sort");
+    const old = th.querySelector(".arrow"); if(old) old.remove();
+    if(k===SORT.key){ const s=document.createElement("span"); s.className="arrow"; s.textContent = SORT.dir<0?" ▼":" ▲"; th.appendChild(s); }
+  });
+  if($("sortBy")) $("sortBy").value = SORT.key;
+}
+function setSort(key){
+  if(SORT.key===key) SORT.dir = -SORT.dir; else { SORT.key=key; SORT.dir=-1; }
+  applyTableView();
+}
+["tableSearch","filterDir","filterRole","filterRef"].forEach(id=>{
   $(id).addEventListener("input", applyTableView);
   $(id).addEventListener("change", applyTableView);
 });
+$("sortBy").addEventListener("change", ()=>{ SORT.key=$("sortBy").value; SORT.dir=-1; applyTableView(); });
+document.querySelectorAll("th[data-sort]").forEach(th=> th.addEventListener("click", ()=>setSort(th.getAttribute("data-sort"))));
 function exportCsv(){
   const head = ["时间","市场","角色","方向","USDT","份额","均价","净手续费","对手方","邀请人","Tx"];
   const rows = RESULTS.filter(tr=>tr.style.display!=="none").map(tr=>{
@@ -1523,8 +1586,20 @@ document.querySelectorAll(".lnk[data-toggle]").forEach(s=> s.addEventListener("c
 }));
 $("status").setAttribute("aria-live","polite");
 
-// 预填示例钱包，方便测试
-$("wallet").value = "0xab929df893b7e6202539aae41c86afc7ab575821";
+/* ---- 主题（深/浅）+ 本地记忆（不存任何 API Key） ---- */
+const LS = {
+  get:(k,d)=>{ try{ const v=localStorage.getItem("pf."+k); return v==null?d:v; }catch(_){ return d; } },
+  set:(k,v)=>{ try{ localStorage.setItem("pf."+k, v); }catch(_){} },
+};
+function applyTheme(t){ document.documentElement.dataset.theme = t; $("themeBtn").textContent = t==="light"?"☀️":"🌙"; LS.set("theme", t); }
+$("themeBtn").addEventListener("click", ()=> applyTheme(document.documentElement.dataset.theme==="light"?"dark":"light"));
+applyTheme(LS.get("theme", "dark"));
+// 记住非敏感输入
+["days","refDays"].forEach(id=> $(id).addEventListener("change", ()=>LS.set(id, $(id).value)));
+$("wallet").addEventListener("change", ()=>{ const v=$("wallet").value.trim(); if(isAddr(v)) LS.set("wallet", v); });
+$("days").value = LS.get("days", "1");
+$("refDays").value = LS.get("refDays", "180");
+$("wallet").value = LS.get("wallet", "0xab929df893b7e6202539aae41c86afc7ab575821");
 validateWallet();
 
 // 页面加载时探测服务端代理，更新 key 输入框提示
@@ -1544,7 +1619,10 @@ validateWallet();
     banner.className = "banner info";
     banner.innerHTML = "ℹ️ 未检测到 /api 服务端代理：当前为本地 / 纯静态模式，请在「高级设置」手填 API Key。";
   }
-  applyMode("fast");      // 默认快速查询，并据服务端配置刷新字段显隐
+  // 恢复上次的来源/解析方式；没有则默认快速查询
+  const savedSrc = LS.get("source"), savedEnr = LS.get("enrich");
+  if(savedSrc){ $("source").value = savedSrc; if(savedEnr) $("enrich").value = savedEnr; syncFieldsFromControls(); }
+  else applyMode("fast");
 })();
 </script>
 </body>
