@@ -282,7 +282,7 @@
         </div>
         <div class="fld" data-need="opinxBase">
           <label for="opinxBase">OPinX 接口前缀</label>
-          <input id="opinxBase" value="https://tool.opinx.app/api/predict/orders" />
+          <input id="opinxBase" value="https://tool.opinx.app/api/predict/trades" />
         </div>
       </div>
     </details>
@@ -706,58 +706,61 @@ async function getBlockTime(blockHex, mode, key, rpc){
 /* =====================================================================
  * 交易列表来源
  * ===================================================================== */
-// OPinX：返回 tx_hash 列表 + 元数据
-async function listFromOpinx(wallet, days, base){
-  // 服务端模式走 /api/opinx（服务端带 Origin 头，绕过来源校验）
-  const url = SERVER.enabled
-    ? `/api/opinx?wallet=${wallet}&days=${days}`
-    : `${base.replace(/\/$/,"")}/${wallet}?days=${days}`;
-  log("OPinX 请求: "+url);
-  const { ok, status, json, text } = await fetchJSON(url);
-  if(!ok || !json){
-    let hint = "";
-    if(status===404) hint = SERVER.enabled
-      ? " — 服务端代理未命中（确认 /api 已部署、OPINX_BASE 正确）。也可改用「BSC 直接扫链」。"
-      : " — 该免 Key 接口可能限制了直接浏览器访问（校验来源）。部署到 Vercel 用 /api 代理，或改用「BSC 直接扫链」。";
-    else if(status===403) hint = " — 被拒绝访问。请改用「BSC 直接扫链」来源。";
-    throw new Error(`OPinX HTTP ${status}${hint}` + (text?(" | "+text.slice(0,120)):""));
-  }
-  // 递归收集所有 fill。market_title/category_slug 在“市场”层，需沿路径继承给每个 fill
-  const items = new Map(); // txhash -> meta
-  const walk = (node, ctx) => {
-    if(Array.isArray(node)){ node.forEach(n=>walk(n, ctx)); return; }
-    if(node && typeof node==="object"){
-      // 更新市场上下文（遇到带 market 字段的节点就刷新，向下继承）
-      const c = {
-        market: node.market_title || node.marketTitle || (typeof node.market==="string"?node.market:null) || ctx.market,
-        slug:   node.category_slug || node.categorySlug || node.slug || ctx.slug,
-        marketId: node.market_id || node.marketId || node.conditionId || ctx.marketId,
-        outcome: node.outcome || ctx.outcome,
-      };
-      const tx = node.tx_hash || node.txHash || node.transactionHash || node.transaction_hash;
-      if(tx && /^0x[0-9a-fA-F]{64}$/.test(tx)){
-        const prev = items.get(tx.toLowerCase()) || {};
-        items.set(tx.toLowerCase(), {
-          tx_hash: tx,
-          ts: node.ts || node.timestamp || node.block_timestamp || node.executed_at || prev.ts,
-          market: c.market || prev.market,
-          slug: c.slug || prev.slug,
-          marketId: c.marketId || prev.marketId,
-          outcome: c.outcome || prev.outcome,
-          counterparty: node.counterparty || prev.counterparty,
-          avg_price: node.avg_price ?? node.priceExecuted ?? node.price_executed ?? node.price ?? prev.avg_price,
-          // 快速模式（无 receipt）直接展示 OPinX 自带字段
-          side: node.user_side ?? node.side ?? node.direction ?? prev.side,
-          role: node.user_role ?? node.role ?? prev.role,
-          fee: node.fee ?? node.fee_usdt ?? node.sum_fee_usdt ?? node.feeUsd ?? prev.fee,
-          usdt: node.usdt ?? node.usdt_amount ?? node.value_usdt ?? node.valueUsd ?? node.collateral ?? node.amount_usdt ?? prev.usdt,
-          shares: node.shares ?? node.amount_filled ?? node.amountFilled ?? node.size ?? node.share_amount ?? prev.shares,
-        });
-      }
-      Object.values(node).forEach(v=>walk(v, c));
-    }
+// 把 OPinX /trades/{wallet}/history 的一条交易映射成内部记录（相对 wallet 视角）
+function opinxTrade(t, w){
+  const maker = String(t.maker||"").toLowerCase(), taker = String(t.taker||"").toLowerCase();
+  const isMaker = maker===w;
+  let counter = isMaker ? taker : maker;
+  if(EXCHANGES.has(counter)) counter = null;            // 撮合合约不算真实对手方
+  const usdtIsMaker = String(t.maker_asset_id)==="0";   // 哪条腿是 USDT(assetId=0)
+  const usdt = Number(usdtIsMaker ? t.maker_amount : t.taker_amount) || 0;
+  const shares = Number(usdtIsMaker ? t.taker_amount : t.maker_amount) || 0;
+  let side = String(t.side||"").toUpperCase();           // side 以 maker 视角；wallet 是 taker 时取反
+  if(!isMaker) side = side==="BUY"?"SELL":side==="SELL"?"BUY":side;
+  return {
+    tx_hash: t.tx_hash, ts: t.block_timestamp,
+    market: t.market_title, slug: t.category_slug, marketId: t.market_id, outcome: t.outcome_name,
+    counterparty: counter, role: isMaker ? "maker" : "taker", side,
+    usdt, shares, fee: Number(t.fee_usdt) || 0,
+    avg_price: shares>0 ? usdt/shares : null,
   };
-  walk(json, {});
+}
+// OPinX：/api/predict/trades/{wallet}/history（分页 + 时间范围），相对 wallet 解析
+async function listFromOpinx(wallet, days, base){
+  const w = wallet.toLowerCase();
+  const end_time = Math.floor(Date.now()/1000);
+  const start_time = end_time - days*86400;
+  const tradesBase = (base && /trades/.test(base)) ? base : "https://tool.opinx.app/api/predict/trades";
+  const items = new Map();
+  const limit = 50; let offset = 0, pages = 0;
+  while(pages < 60){
+    if(aborted) break;
+    const qs = `limit=${limit}&offset=${offset}&sort=time&start_time=${start_time}&end_time=${end_time}`;
+    const url = SERVER.enabled
+      ? `/api/opinx?wallet=${wallet}&${qs}`
+      : `${tradesBase.replace(/\/$/,"")}/${wallet}/history?${qs}`;
+    const { ok, status, json, text } = await fetchJSON(url);
+    if(!ok || !json){
+      let hint = status===404 ? "（确认 /api 已部署，或改用「BSC 扫链」来源）"
+               : status===403 ? "（被拒绝，改用「BSC 扫链」来源）" : "";
+      throw new Error(`OPinX HTTP ${status}${hint}` + (text?(" | "+text.slice(0,100)):""));
+    }
+    const trades = json.trades || json.data || [];
+    for(const t of trades){
+      const it = opinxTrade(t, w);
+      if(!it.tx_hash) continue;
+      const k = it.tx_hash.toLowerCase();
+      const prev = items.get(k);
+      if(prev){ // 同一 tx 多笔 fill → 累加金额
+        prev.usdt += it.usdt; prev.shares += it.shares; prev.fee += it.fee;
+        prev.avg_price = prev.shares>0 ? prev.usdt/prev.shares : prev.avg_price;
+        if(!prev.counterparty && it.counterparty) prev.counterparty = it.counterparty;
+      } else items.set(k, it);
+    }
+    pages++; offset += limit;
+    setStatus(`① 拉取交易列表…（${items.size}）`);
+    if(trades.length < limit) break;
+  }
   log(`OPinX 命中 ${items.size} 笔 tx`);
   return [...items.values()];
 }
