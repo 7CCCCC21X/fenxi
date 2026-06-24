@@ -312,9 +312,13 @@
       <div class="card-title" style="margin:0">成交记录 <span id="rowCount" class="pill"></span></div>
       <div class="toolbar" id="toolbar" style="display:none">
         <input id="tableSearch" placeholder="搜索 市场 / 地址 / Tx" />
+        <select id="filterMarket" title="按市场筛选"><option value="">全部市场</option></select>
         <select id="filterDir"><option value="">全部方向</option><option value="buy">买入</option><option value="sell">卖出</option></select>
         <select id="filterRole"><option value="">全部角色</option><option value="maker">maker</option><option value="taker">taker</option></select>
         <label class="chk"><input type="checkbox" id="filterRef" /> 有邀请人</label>
+        <input type="date" id="filterFrom" title="起始日期" />
+        <span class="chk">–</span>
+        <input type="date" id="filterTo" title="结束日期" />
         <select id="sortBy">
           <option value="ts">时间 ↓</option>
           <option value="usdt">金额 ↓</option>
@@ -1158,7 +1162,7 @@ async function run(){
       RESULTS.push(tr);
       enrichRow(tr, parsed); // 异步补用户名 / 市场名（Predict GraphQL）
     }
-    if(RESULTS.length){ $("toolbar").style.display = "flex"; applyTableView(); }
+    if(RESULTS.length){ $("toolbar").style.display = "flex"; populateMarketFilter(); applyTableView(); }
 
     // 3) 汇总卡片
     $("summaryCard").style.display = "";
@@ -1325,6 +1329,7 @@ function enrichRow(tr, p){
     resolveMarket(cid).then(m=>{
       if(m && m.title){
         mktEl.innerHTML = m.url ? `<a href="${m.url}" target="_blank">${m.title} ↗</a>` : m.title;
+        if(tr._rec){ tr._rec.market = m.title; populateMarketFilter(); } // 让市场筛选下拉补上
       }else{
         // 索引里没匹配到：退而显示 conditionId 短码 + bscscan 链接
         mktEl.innerHTML = `<span class="hint mono">cond ${cid.slice(0,10)}…</span>`;
@@ -1484,9 +1489,21 @@ document.querySelectorAll(".tab").forEach(t=> t.addEventListener("click", ()=>{
 
 /* ---- 结果表 筛选 / 排序 / 导出 ---- */
 let SORT = { key:"ts", dir:-1 };
+function populateMarketFilter(){
+  const sel = $("filterMarket"); if(!sel) return;
+  const cur = sel.value;
+  const set = new Set(RESULTS.map(tr=>(tr._rec||{}).market).filter(Boolean));
+  sel.innerHTML = "";
+  const all = document.createElement("option"); all.value=""; all.textContent="全部市场"; sel.appendChild(all);
+  [...set].sort().forEach(m=>{ const o=document.createElement("option"); o.value=m; o.textContent=m.length>40?m.slice(0,40)+"…":m; sel.appendChild(o); });
+  sel.value = cur;
+}
 function applyTableView(){
   const q = ($("tableSearch").value||"").trim().toLowerCase();
   const fDir = $("filterDir").value, fRole = $("filterRole").value, fRef = $("filterRef").checked;
+  const fMarket = $("filterMarket").value;
+  const fFrom = $("filterFrom").value ? Date.parse($("filterFrom").value+"T00:00:00")/1000 : null;
+  const fTo   = $("filterTo").value   ? Date.parse($("filterTo").value+"T23:59:59")/1000 : null;
   const tbody = $("tbody");
   let shown = 0;
   const visible = [];
@@ -1496,6 +1513,9 @@ function applyTableView(){
     if(fDir && r.dir!==fDir) ok=false;
     if(ok && fRole && r.role!==fRole) ok=false;
     if(ok && fRef && !(r.referrers&&r.referrers.length)) ok=false;
+    if(ok && fMarket && r.market!==fMarket) ok=false;
+    if(ok && fFrom && (r.ts||0) < fFrom) ok=false;
+    if(ok && fTo && (r.ts||0) > fTo) ok=false;
     if(ok && q){
       const hay = [r.market, r.tx, ...(r.counterparties||[]), ...(r.referrers||[])].join(" ").toLowerCase();
       if(!hay.includes(q)) ok=false;
@@ -1524,7 +1544,7 @@ function setSort(key){
   if(SORT.key===key) SORT.dir = -SORT.dir; else { SORT.key=key; SORT.dir=-1; }
   applyTableView();
 }
-["tableSearch","filterDir","filterRole","filterRef"].forEach(id=>{
+["tableSearch","filterDir","filterRole","filterRef","filterMarket","filterFrom","filterTo"].forEach(id=>{
   $(id).addEventListener("input", applyTableView);
   $(id).addEventListener("change", applyTableView);
 });
