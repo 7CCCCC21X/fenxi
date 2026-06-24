@@ -1239,6 +1239,12 @@ function setProgress(done, total){
   bar.style.display="block";
   $("progressBar").style.width = Math.round(done/total*100)+"%";
 }
+// 把一个带文案的进度条渲染进任意容器（用于邀请关系/对手方邀请人等长任务）
+function showProgress(el, label, d, t){
+  const pct = t>0 ? Math.min(100, Math.round(d/t*100)) : 0;
+  el.innerHTML = `<div class="pill busy" style="margin-bottom:8px">${label}${t?` · ${pct}%`:""}</div>`
+    + `<div class="progress" style="display:block"><div style="width:${pct}%"></div></div>`;
+}
 function validateWallet(){
   const el = $("wallet"), err = $("walletErr");
   const v = el.value.trim();
@@ -1451,9 +1457,9 @@ async function doFindReferrer(){
   aborted = false; const days = refDaysVal();
   try{
     if(addrs.length===1){
-      box.innerHTML = `<span class="pill busy">查邀请人中…（回溯 ${days} 天）</span>`;
+      showProgress(box, `查邀请人中…（回溯 ${days} 天）`, 0, 0);
       const r = await findReferrer(addrs[0], days,
-        (s,t)=>{ box.innerHTML = `<span class="pill busy">查邀请人中…（已回溯 ${Math.round(s/Math.max(t,1)*100)}%）</span>`; });
+        (s,t)=> showProgress(box, "查邀请人中…", s, t));
       box.innerHTML = r
         ? `<div>该钱包的邀请人：<b>${personHtml(r.referrer, ` <a class="addr" href="https://bscscan.com/tx/${r.tx}" target="_blank">tx↗</a>`)}</b></div>`
         : `<div class="hint">未找到邀请人（最近 ${days} 天无邀请返佣，或邀请更早，请加大天数）。</div>`;
@@ -1463,7 +1469,7 @@ async function doFindReferrer(){
     const rows = [];
     for(let i=0;i<addrs.length;i++){
       if(aborted) break;
-      box.innerHTML = `<span class="pill busy">批量查邀请人 ${i+1}/${addrs.length}…</span>`;
+      showProgress(box, `批量查邀请人 ${i+1}/${addrs.length}`, i, addrs.length);
       let r=null; try{ r = await findReferrer(addrs[i], days); }catch(e){ r = {error:e.message}; }
       rows.push([addrs[i], r]);
     }
@@ -1491,9 +1497,9 @@ async function doFindInvitees(){
   };
   try{
     if(addrs.length===1){
-      box.innerHTML = `<span class="pill busy">查下线中…（回溯 ${days} 天）</span>`;
+      showProgress(box, `查下线中…（回溯 ${days} 天）`, 0, 0);
       const { invitees, scanned, total, capped, earlyStopped } = await findInvitees(addrs[0], days,
-        (label,d,t,n)=>{ box.innerHTML = `<span class="pill busy">${label} ${d}/${t}${n!=null?`，已发现 ${n} 个下线`:""}…</span>`; });
+        (label,d,t,n)=> showProgress(box, `${label}${n!=null?`（已发现 ${n} 个下线）`:""}`, d, t));
       box.innerHTML = renderOne(addrs[0], invitees, scanned, total, capped, earlyStopped);
       fillRefNames(box); return;
     }
@@ -1501,7 +1507,8 @@ async function doFindInvitees(){
     let html = "";
     for(let i=0;i<addrs.length;i++){
       if(aborted) break;
-      box.innerHTML = html + `<span class="pill busy">批量查下线 ${i+1}/${addrs.length}（${short(addrs[i])}）…</span>`;
+      box.innerHTML = html + `<div class="pill busy" style="margin:6px 0">批量查下线 ${i+1}/${addrs.length}（${short(addrs[i])}）…</div>`
+        + `<div class="progress" style="display:block"><div style="width:${Math.round(i/addrs.length*100)}%"></div></div>`;
       try{
         const { invitees, scanned, total, capped, earlyStopped } = await findInvitees(addrs[i], days);
         html += renderOne(addrs[i], invitees, scanned, total, capped, earlyStopped);
@@ -1669,12 +1676,15 @@ async function resolveCpReferrers(){
   if(persons.length===0) return;
   aborted = false;
   btn.disabled = true; const orig = btn.textContent;
+  const note = $("tableNote"); note.style.display = "";
   const days = 180; let done = 0;
+  showProgress(note, "解析对手方邀请人…", 0, uniq.length||1);
   await pMap(uniq, async addr=>{
     try{ const r = await findReferrer(addr, days); _cpRefCache.set(addr, r&&r.referrer||null); }
     catch(_){ _cpRefCache.set(addr, null); }
-    done++; btn.textContent = `解析中 ${done}/${uniq.length}…`;
+    done++; showProgress(note, "解析对手方邀请人…", done, uniq.length||1);
   }, 3);
+  note.style.display = "none"; note.innerHTML = "";
   persons.forEach(p=>{
     const addr = p.getAttribute("data-addr");
     const ref = _cpRefCache.get(addr);
