@@ -732,7 +732,7 @@ async function blockTip(){
   }
   return Number(bg(await rpcCall("eth_blockNumber", [])));
 }
-// 时间戳 → 区块：优先 BSC API 的 getblocknobytime，否则 RPC 二分（不依赖固定出块时间）
+// 时间戳 → 区块：优先 BSC API 的 getblocknobytime；否则 RPC 用 2 个采样点线性估算（约 3 次请求，足够精确定位回溯起点）
 async function rpcBlockTs(bn){ const b = await rpcCall("eth_getBlockByNumber", ["0x"+bn.toString(16), false]); return b ? Number(bg(b.timestamp)) : null; }
 async function blockFromTime(targetTs){
   const key = currentBscKey();
@@ -743,14 +743,12 @@ async function blockFromTime(targetTs){
       else if(json && /^\d+$/.test(String(json.result||""))){ _bscApiUsable=true; return Number(json.result); }
     }catch(_){}
   }
-  // RPC 二分查找（约 26 次请求）
-  let lo=1, hi=Number(bg(await rpcCall("eth_blockNumber", [])));
-  while(lo<hi){
-    const mid=(lo+hi)>>1; const ts=await rpcBlockTs(mid);
-    if(ts==null){ hi=mid-1; continue; }
-    if(ts<targetTs) lo=mid+1; else hi=mid;
-  }
-  return lo;
+  // RPC 估算：采样最新块与 N 块前，算平均出块时间，再线性外推
+  const tip = Number(bg(await rpcCall("eth_blockNumber", [])));
+  const back = Math.min(tip-1, 1000000);
+  const [tA, tB] = await Promise.all([ rpcBlockTs(tip), rpcBlockTs(tip-back) ]);
+  const blockTime = (tA && tB && tA>tB) ? (tA-tB)/back : 1.5; // 秒/块，兜底 1.5s
+  return Math.max(0, tip - Math.floor((tA - targetTs)/Math.max(blockTime, 0.1)));
 }
 
 // 取一个区块窗口的日志：优先 BSC API（一次最多 1000 条），不可用则 RPC。address 可选（按合约过滤）
@@ -781,18 +779,27 @@ async function getLogsWindow(topics, from, to, address){
   return await rpcCall("eth_getLogs", [filter]);
 }
 
-// 分块扫描一段区间的日志（自适应缩小窗口）。address 可选
+// 扫描一段区间的日志。按合约地址 + 邀请人 topic 过滤后结果极少，故先“整段一次查询”；
+// 仅当节点拒绝（区块范围/条数超限）才自适应减半，逐步收敛到该节点允许的最大窗口。
 async function scanLogsRange(topics, fromBlock, toBlock, onProgress, address){
-  const out=[]; let size=100000, from=fromBlock; // 窄 topic 过滤，宽区间通常一次即可；严格节点自动减半
+  const out=[]; let size = Math.max(1, toBlock - fromBlock + 1); let from=fromBlock;
   while(from<=toBlock){
     if(aborted) break;
     const to=Math.min(toBlock, from+size-1);
     let part;
     try{ part = await getLogsWindow(topics, from, to, address); }
-    catch(e){ if(size>500 && isRangeErr(e)){ size=Math.floor(size/2); continue; } throw e; }
+    catch(e){
+      if(isRangeErr(e)){
+        if(size>49000) size=49000;            // 多数节点上限≈50000，直接跳到该档，少走弯路
+        else if(size>2000) size=Math.floor(size/2);
+        else throw e;
+        continue;
+      }
+      throw e;
+    }
     out.push(...part); from=to+1;
     onProgress && onProgress(from-fromBlock, toBlock-fromBlock, out.length);
-    await sleep(120);
+    if(from<=toBlock) await sleep(80); // 整段命中时基本不触发
   }
   return out;
 }
