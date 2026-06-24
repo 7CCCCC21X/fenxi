@@ -1217,7 +1217,8 @@ async function run(){
     }
     if(RESULTS.length){
       $("toolbar").style.display = "flex"; populateMarketFilter(); applyTableView(); autoHideEmptyColumns(enrich);
-      if(enrich!=="none") autoResolveCpReferrers(myRun); // 精准模式：后台自动解析对手方邀请人
+      // 后台自动解析对手方邀请人：先 GraphQL（对 maker 也有效），精准模式再允许链上回退
+      autoResolveCpReferrers(myRun, enrich!=="none");
     }
 
     // 3) 汇总卡片
@@ -1684,42 +1685,36 @@ $("useExample").addEventListener("click", ()=>{ $("wallet").value="0xab929df893b
 
 // 解析每个对手方各自的邀请人（链上扫描，缓存到 _cpRefCache）
 const _cpRefCache = new Map();
+// 手动按钮：用同一套逻辑（GraphQL 优先 + 链上回退）解析对手方邀请人
 async function resolveCpReferrers(){
-  const btn = $("cpRefBtn");
-  const persons = [...document.querySelectorAll('#resultTable td[data-label="对手方"] .person[data-addr]')];
-  const uniq = [...new Set(persons.map(p=>p.getAttribute("data-addr")))].filter(a=>!_cpRefCache.has(a));
-  if(persons.length===0) return;
-  aborted = false;
-  btn.disabled = true; const orig = btn.textContent;
-  const note = $("tableNote"); note.style.display = "";
-  const days = 180; let done = 0;
-  showProgress(note, "解析对手方邀请人…", 0, uniq.length||1);
-  await pMap(uniq, async addr=>{
-    try{ const r = await findReferrer(addr, days); _cpRefCache.set(addr, r&&r.referrer||null); }
-    catch(_){ _cpRefCache.set(addr, null); }
-    done++; showProgress(note, "解析对手方邀请人…", done, uniq.length||1);
-  }, 3);
-  note.style.display = "none"; note.innerHTML = "";
-  persons.forEach(p=>{
-    const addr = p.getAttribute("data-addr");
-    const ref = _cpRefCache.get(addr);
-    const el = p.querySelector(".cpref");
-    if(el) el.innerHTML = ref ? `<span class="hint">↑邀请人 ${personHtml(ref)}</span>` : `<span class="hint">↑邀请人：未找到</span>`;
-  });
-  fillRefNames($("tbody"));
-  btn.disabled = false; btn.textContent = orig;
+  const btn = $("cpRefBtn"); btn.disabled = true; const orig = btn.textContent; btn.textContent = "解析中…";
+  try{ await autoResolveCpReferrers(RUN_ID, true); }
+  finally{ btn.disabled = false; btn.textContent = orig; }
 }
 $("cpRefBtn").addEventListener("click", resolveCpReferrers);
 
+// 优先用 GraphQL 直接查“谁邀请了该地址”（瞬间、对纯 maker 也有效）；schema 不支持就标记后不再试
+let _referredBySupported = null; // null 未知, false 不支持
+async function resolveReferredBy(addr){
+  if(_referredBySupported===false) return undefined;
+  const j = await gql(`query R($a:Address!){account(address:$a){referredBy{address name}}}`, { a: toChecksum(addr) });
+  if(!j) return undefined;                       // GraphQL 不可达 → 未知，交给链上回退
+  if(j.errors){ _referredBySupported=false; return undefined; } // 无此字段
+  _referredBySupported = true;
+  const rb = j.data && j.data.account && j.data.account.referredBy;
+  if(!rb) return null;                            // 确认无邀请人
+  const a = (typeof rb==="string") ? rb : rb.address;
+  return a ? String(a).toLowerCase() : null;
+}
+
 // 查询后自动在后台解析对手方邀请人（谁先查到先显示；缓存复用；过期查询自动放弃）
-async function autoResolveCpReferrers(runId){
+async function autoResolveCpReferrers(runId, allowChain){
   const persons = [...document.querySelectorAll('#resultTable td[data-label="对手方"] .person[data-addr]')];
   if(!persons.length) return;
   const fill = (addr, ref) => persons.filter(p=>p.getAttribute("data-addr")===addr).forEach(p=>{
     const el = p.querySelector(".cpref"); if(!el) return;
     el.innerHTML = ref ? `<span class="hint">↑邀请人 ${personHtml(ref)}</span>` : `<span class="hint">↑邀请人：未找到</span>`;
   });
-  // 已缓存的立刻填；未缓存的标记“查询中…”
   const todo = [];
   for(const addr of new Set(persons.map(p=>p.getAttribute("data-addr")))){
     if(_cpRefCache.has(addr)) fill(addr, _cpRefCache.get(addr));
@@ -1728,12 +1723,18 @@ async function autoResolveCpReferrers(runId){
   const days = 180;
   await pMap(todo, async addr=>{
     if(runId!==RUN_ID || aborted) return;
-    try{ const r = await findReferrer(addr, days); _cpRefCache.set(addr, r&&r.referrer||null); }
-    catch(_){ _cpRefCache.set(addr, null); }
+    let ref;
+    try{
+      const rb = await resolveReferredBy(addr);                 // 先 GraphQL
+      if(rb!==undefined) ref = rb;
+      else if(allowChain) ref = (await findReferrer(addr, days)||{}).referrer || null; // 回退链上扫描
+      else ref = null;
+    }catch(_){ ref = null; }
+    _cpRefCache.set(addr, ref || null);
     if(runId!==RUN_ID) return;          // 已开始新查询 → 放弃写入
     fill(addr, _cpRefCache.get(addr));   // 查到即显示
     fillRefNames($("tbody"));
-  }, 2);
+  }, 3);
 }
 
 /* ---- 模式 / 动态字段 / 密码显隐 ---- */
