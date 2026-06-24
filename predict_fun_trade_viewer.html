@@ -993,26 +993,36 @@ async function pMap(items, fn, conc){
 }
 const RECEIPT_CONC = 6; // 并发拉 receipt 的路数
 
-// 查某钱包的邀请人：扫各手续费合约的 FeeRefunded(to=wallet)，并发取同 tx 的 referrer
+// 查某地址的邀请人：从最新往回扫它作为 taker 付费的 FeeRefunded(to=addr,feeCharged>0)，
+// 凑到几条候选就停（邀请人固定，最近一笔即可），并发取同 tx 的 referrer。
 async function findReferrer(address, days, onProgress){
   const tip = await blockTip();
   const fromBlock = await blockFromTime(Math.floor(Date.now()/1000) - days*86400);
   const topics = [T.FEE_REFUNDED, null, padTopic(address)];
-  let logs = [];
+  const NEED = 6;
+  const cands = [];
   for(const mod of FEE_MODULES){
-    if(aborted) break;
-    logs.push(...await scanLogsRange(topics, fromBlock, tip, (d,t)=>onProgress && onProgress(d,t), mod));
+    if(aborted || cands.length>=NEED) break;
+    let size = Math.max(1, tip - fromBlock + 1), to = tip;
+    while(to>=fromBlock && cands.length<NEED){
+      if(aborted) break;
+      const from = Math.max(fromBlock, to - size + 1);
+      let part;
+      try{ part = await getLogsWindow(topics, from, to, mod); }
+      catch(e){ if(isRangeErr(e)){ if(size>49000) size=49000; else if(size>2000) size=Math.floor(size/2); else throw e; continue; } throw e; }
+      part.sort((a,b)=> Number(bg(b.blockNumber)) - Number(bg(a.blockNumber))); // 窗口内最新优先
+      for(const lg of part){ if(word(lg.data,2)>0n){ cands.push(lg); if(cands.length>=NEED) break; } }
+      if(from===fromBlock && to===tip) break; // 整段一次拿完
+      to = from - 1;
+      onProgress && onProgress(tip-to, tip-fromBlock);
+    }
   }
-  // 邀请人对一个用户固定：只看最近若干笔付费交易，并发解析
-  const cands = logs.filter(lg=>word(lg.data,2)>0n)
-    .sort((a,b)=> Number(bg(b.blockNumber)) - Number(bg(a.blockNumber))).slice(0,12);
-  let done=0;
-  const res = await pMap(cands, async lg=>{
+  cands.sort((a,b)=> Number(bg(b.blockNumber)) - Number(bg(a.blockNumber)));
+  const res = await pMap(cands.slice(0, NEED), async lg=>{
     const ref = referrerFromReceipt(await getReceiptAny(lg.transactionHash));
-    onProgress && onProgress(++done, cands.length);
     return ref ? { referrer:ref, tx:lg.transactionHash } : null;
   }, RECEIPT_CONC);
-  for(const x of res){ if(x) return x; } // cands 已按时间降序，取最近命中
+  for(const x of res){ if(x) return x; } // 取最近命中
   return null;
 }
 
