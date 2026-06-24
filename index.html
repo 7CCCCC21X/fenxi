@@ -139,6 +139,8 @@
   .pill.busy::before{content:"";width:13px;height:13px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
 
+  .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(10px);background:var(--panel3);color:var(--text);border:1px solid var(--border2);padding:9px 16px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;z-index:100}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   .empty{padding:46px 20px;text-align:center;color:var(--faint)}
   .legend{font-size:11.5px;color:var(--muted);margin-top:14px;line-height:1.85;padding-top:12px;border-top:1px solid var(--border)}
 
@@ -612,7 +614,23 @@ function word(data, i){
   return bg("0x" + (d.substr(i*64, 64) || "0"));
 }
 const sleep = ms => new Promise(r=>setTimeout(r, ms));
-function copy(txt){ navigator.clipboard?.writeText(txt); }
+function toast(msg){
+  let el = document.getElementById("toast");
+  if(!el){ el = document.createElement("div"); el.id = "toast"; el.className = "toast"; document.body.appendChild(el); }
+  el.textContent = msg; el.classList.add("show");
+  clearTimeout(el._t); el._t = setTimeout(()=>el.classList.remove("show"), 1400);
+}
+function copy(txt){
+  const ok = ()=>toast("已复制 "+(/^0x[a-fA-F0-9]{40}$/.test(txt)?short(txt):txt));
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(txt).then(ok, ()=>fallbackCopy(txt,ok));
+  }catch(_){}
+  fallbackCopy(txt, ok);
+}
+function fallbackCopy(txt, ok){
+  try{ const ta=document.createElement("textarea"); ta.value=txt; ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); ok&&ok(); }
+  catch(_){ toast("复制失败"); }
+}
 window.copy = copy;
 
 /* =====================================================================
@@ -994,7 +1012,7 @@ async function pMap(items, fn, conc){
   await Promise.all(workers);
   return out;
 }
-const RECEIPT_CONC = 6; // 并发拉 receipt 的路数
+const RECEIPT_CONC = 10; // 并发拉 receipt 的路数（RPC）
 
 // 查某地址的邀请人：从最新往回扫它作为 taker 付费的 FeeRefunded(to=addr,feeCharged>0)，
 // 凑到几条候选就停（邀请人固定，最近一笔即可），并发取同 tx 的 referrer。
@@ -1187,17 +1205,13 @@ async function run(){
     items.sort((a,b)=>(b.ts||0)-(a.ts||0));
     log(`共 ${items.length} 笔，开始${enrich==="none"?"展示":"解析 receipt"}…`);
 
-    // 2) 逐笔解析 receipt
+    // 2) 解析 receipt（并行；RPC 10 路 / BSC API 3 路 / 不解析 直接渲染）
     let totUsdtIn=0n, totUsdtOut=0n, totFee=0n;
     const refSet = new Set(), cpSet = new Set();
     let done=0;
-
-    for(const it of items){
-      if(aborted){ log("已停止","err"); break; }
-      done++;
-      setStatus(enrich==="none" ? `② 展示 ${done}/${items.length} …` : `② 解析链上 receipt ${done}/${items.length} …`);
-      setProgress(done, items.length);
-
+    const CONC = enrich==="none" ? 16 : (enrich==="rpc" ? RECEIPT_CONC : 3);
+    await pMap(items, async (it)=>{
+      if(aborted) return;
       let parsed = null;
       if(enrich!=="none"){
         try{
@@ -1206,18 +1220,13 @@ async function run(){
             : await getReceiptViaApi(it.tx_hash, bscKey);
           if(receipt){
             parsed = parseReceipt(receipt, wallet);
-            // 补时间戳
             if(!it.ts && receipt.blockNumber){
               try{ it.ts = await getBlockTime(receipt.blockNumber, enrich, bscKey, rpcUrl); }catch(_){}
             }
           }
-        }catch(e){
-          log(`tx ${short(it.tx_hash)} 解析失败: ${e.message}`,"err");
-        }
-        if(enrich==="bscapi") await sleep(230); // 免费档限速
+        }catch(e){ log(`tx ${short(it.tx_hash)} 解析失败: ${e.message}`,"err"); }
       }
-
-      // 汇总
+      if(aborted) return;
       if(parsed){
         totUsdtIn += parsed.usdtIn; totUsdtOut += parsed.usdtOut; totFee += parsed.netFee;
         parsed.counterparties.forEach(c=>cpSet.add(c));
@@ -1227,7 +1236,10 @@ async function run(){
       tbody.appendChild(tr);
       RESULTS.push(tr);
       enrichRow(tr, parsed); // 异步补用户名 / 市场名（Predict GraphQL）
-    }
+      done++;
+      setStatus(enrich==="none" ? `② 展示 ${done}/${items.length} …` : `② 解析链上 receipt ${done}/${items.length} …`);
+      setProgress(done, items.length);
+    }, CONC);
     if(RESULTS.length){
       $("toolbar").style.display = "flex"; populateMarketFilter(); applyTableView(); autoHideEmptyColumns(enrich);
       // 后台自动解析对手方邀请人：先 GraphQL（对 maker 也有效），精准模式再允许链上回退
@@ -1511,7 +1523,7 @@ async function doFindReferrer(){
       const cell = box.querySelector(`.refcell[data-i="${i}"]`);
       if(cell) cell.innerHTML = r&&r.referrer ? personHtml(r.referrer) : (r&&r.error ? `<span class="err">${r.error}</span>` : "未找到");
       setHead(); fillRefNames(box);
-    }, 6);   // 并行 6 路
+    }, 10);   // 并行 10 路
   }catch(e){ box.innerHTML = `<span class="err">${e.message}</span>`; }
 }
 async function doFindInvitees(){
