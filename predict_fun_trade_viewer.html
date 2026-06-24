@@ -12,14 +12,16 @@
     --accent:#4d8dff; --accent2:#7c5cff; --green:#46d07f; --red:#ff6b6b;
     --yellow:#e2b13c; --purple:#a98bff;
     --thead:#10151e; --headerbg:rgba(10,13,19,.78); --glow1:rgba(124,92,255,.10); --glow2:rgba(77,141,255,.10);
+    --num:#dbe6f4; --addrc:#9fc0ee; --uname:#7fd1ff; --link:#7fb2ff;
     --mono:'SFMono-Regular',ui-monospace,Consolas,Menlo,monospace;
     --shadow:0 6px 24px rgba(0,0,0,.35);
   }
   :root[data-theme="light"]{
     --bg:#f5f8fc; --bg2:#eef2f8; --panel:#ffffff; --panel2:#f4f7fb; --panel3:#e7eef6;
     --border:#dde4ee; --border2:#cbd6e4;
-    --text:#16202e; --muted:#566576; --faint:#8493a6;
+    --text:#16202e; --muted:#475567; --faint:#69788b;
     --thead:#eef3f9; --headerbg:rgba(255,255,255,.82); --glow1:rgba(124,92,255,.07); --glow2:rgba(77,141,255,.08);
+    --num:#1b2734; --addrc:#1f55a3; --uname:#1565c0; --link:#1565c0;
     --shadow:0 6px 20px rgba(30,50,90,.08);
   }
   *{box-sizing:border-box}
@@ -73,7 +75,7 @@
   details.adv summary::before{content:"⚙ ";opacity:.8}
 
   .mono{font-family:var(--mono)}
-  .addr{font-family:var(--mono);font-size:12px;color:#cdd9ea}
+  .addr{font-family:var(--mono);font-size:12.5px;color:var(--addrc)}
   a{color:var(--accent);text-decoration:none}
   a:hover{text-decoration:underline}
 
@@ -94,9 +96,9 @@
   .scroll::-webkit-scrollbar{height:10px;width:10px}
   .scroll::-webkit-scrollbar-thumb{background:var(--border2);border-radius:6px}
   .scroll::-webkit-scrollbar-track{background:transparent}
-  table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
+  table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
   th,td{text-align:left;padding:11px 13px;vertical-align:top;white-space:nowrap}
-  td{border-top:1px solid var(--border)}
+  td{border-top:1px solid var(--border);color:var(--text)}
   th{color:var(--muted);font-weight:700;font-size:11.5px;letter-spacing:.4px;position:sticky;top:0;z-index:1;background:var(--thead);backdrop-filter:blur(4px)}
   th[data-sort]{cursor:pointer;user-select:none}
   th[data-sort]:hover{color:var(--text)}
@@ -104,7 +106,7 @@
   tbody tr{transition:background .12s}
   tbody tr:nth-child(even) td{background:rgba(255,255,255,.012)}
   tbody tr:hover td{background:rgba(77,141,255,.07)}
-  td.num{font-family:var(--mono);text-align:right;color:#dbe6f4}
+  td.num{font-family:var(--mono);text-align:right;color:var(--num);font-size:12.5px}
 
   .tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.3px}
   .tag.buy{background:rgba(70,208,127,.16);color:var(--green);border:1px solid rgba(70,208,127,.35)}
@@ -115,10 +117,13 @@
 
   .copy{cursor:pointer;color:var(--faint);font-size:11px;margin-left:5px;transition:color .12s}
   .copy:hover{color:var(--accent)}
-  .uname,.uname-demo{color:#7fd1ff;font-weight:600;font-size:12px}
+  .uname,.uname-demo{color:var(--uname);font-weight:600;font-size:12.5px}
   .uname[data-name]{cursor:pointer;text-decoration:underline dotted}
-  .uname[data-name]:hover{color:#aee2ff}
-  .mkt a{color:#9fd0ff}
+  .uname[data-name]:hover{filter:brightness(1.15)}
+  .mkt a{color:var(--link)}
+  .person{display:inline-block;vertical-align:top}
+  .cpref{display:block}
+  .cpref .hint{margin-top:2px;padding-left:6px;border-left:2px solid var(--border2)}
   .pgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:4px}
   .pcell{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:10px 13px}
   .pcell b{display:block;font-size:17px;font-weight:700;margin-top:2px}
@@ -224,8 +229,8 @@
 
     <!-- 模式选择 -->
     <div class="modes" id="modes">
-      <button type="button" class="mode active" data-mode="fast"><b>⚡ 快速查询</b><small>最快 · 免 Key · 先看有没有交易</small></button>
-      <button type="button" class="mode" data-mode="precise"><b>🔍 精准解析</b><small>解析对手方 / 邀请人 · 较慢</small></button>
+      <button type="button" class="mode" data-mode="fast"><b>⚡ 快速查询</b><small>最快 · 免 Key · 先看有没有交易</small></button>
+      <button type="button" class="mode active" data-mode="precise"><b>🔍 精准解析</b><small>解析对手方 / 邀请人 · 推荐</small></button>
       <button type="button" class="mode" data-mode="advanced"><b>⛓️ 高级扫链</b><small>最底层 · 可能慢 · 需 API/RPC</small></button>
     </div>
 
@@ -325,6 +330,7 @@
           <option value="fee">手续费 ↓</option>
           <option value="price">均价 ↓</option>
         </select>
+        <button class="secondary" id="cpRefBtn" title="解析每个对手方各自的邀请人（链上扫描，稍慢）">对手方邀请人</button>
         <button class="secondary" id="exportCsv">导出 CSV</button>
       </div>
     </div>
@@ -1267,10 +1273,12 @@ function showActionError(msg){
 function portfolioUrl(a){ return `https://predict.fun/zh-cn/portfolio/${a}`; }
 function addrCell(a, cls){
   if(!a) return "—";
-  // 地址 → 跳 Predict portfolio；.uname 占位（enrichRow 填 @用户名，可点击查积分）；⧉ 复制
-  return `<a class="addr ${cls||''}" href="${portfolioUrl(a)}" target="_blank" title="打开 Predict portfolio">${short(a)}</a>`
+  // 地址 → 跳 Predict portfolio；.uname 占位（@用户名，可点击查积分）；⧉ 复制；.cpref 占位（对手方邀请人）
+  return `<span class="person" data-addr="${a}">`
+       + `<a class="addr ${cls||''}" href="${portfolioUrl(a)}" target="_blank" title="打开 Predict portfolio">${short(a)}</a>`
        + `<span class="uname" data-addr="${a}" title="点击查询积分"></span>`
-       + `<span class="copy" role="button" aria-label="复制地址" onclick="copy('${a}')">⧉</span>`;
+       + `<span class="copy" role="button" aria-label="复制地址" onclick="copy('${a}')">⧉</span>`
+       + `<span class="cpref"></span></span>`;
 }
 function renderRow(it, p, wallet){
   const tr = document.createElement("tr");
@@ -1652,6 +1660,32 @@ function exportCsv(){
 $("exportCsv").addEventListener("click", exportCsv);
 $("useExample").addEventListener("click", ()=>{ $("wallet").value="0xab929df893b7e6202539aae41c86afc7ab575821"; validateWallet(); run(); });
 
+// 解析每个对手方各自的邀请人（链上扫描，缓存到 _cpRefCache）
+const _cpRefCache = new Map();
+async function resolveCpReferrers(){
+  const btn = $("cpRefBtn");
+  const persons = [...document.querySelectorAll('#resultTable td[data-label="对手方"] .person[data-addr]')];
+  const uniq = [...new Set(persons.map(p=>p.getAttribute("data-addr")))].filter(a=>!_cpRefCache.has(a));
+  if(persons.length===0) return;
+  aborted = false;
+  btn.disabled = true; const orig = btn.textContent;
+  const days = 180; let done = 0;
+  await pMap(uniq, async addr=>{
+    try{ const r = await findReferrer(addr, days); _cpRefCache.set(addr, r&&r.referrer||null); }
+    catch(_){ _cpRefCache.set(addr, null); }
+    done++; btn.textContent = `解析中 ${done}/${uniq.length}…`;
+  }, 3);
+  persons.forEach(p=>{
+    const addr = p.getAttribute("data-addr");
+    const ref = _cpRefCache.get(addr);
+    const el = p.querySelector(".cpref");
+    if(el) el.innerHTML = ref ? `<span class="hint">↑邀请人 ${personHtml(ref)}</span>` : `<span class="hint">↑邀请人：未找到</span>`;
+  });
+  fillRefNames($("tbody"));
+  btn.disabled = false; btn.textContent = orig;
+}
+$("cpRefBtn").addEventListener("click", resolveCpReferrers);
+
 /* ---- 模式 / 动态字段 / 密码显隐 ---- */
 const MODES = {
   fast:     { source:"opinx",   enrich:"none" },
@@ -1726,7 +1760,7 @@ validateWallet();
   // 恢复上次的来源/解析方式；没有则默认快速查询
   const savedSrc = LS.get("source"), savedEnr = LS.get("enrich");
   if(savedSrc){ $("source").value = savedSrc; if(savedEnr) $("enrich").value = savedEnr; syncFieldsFromControls(); }
-  else applyMode("fast");
+  else applyMode("precise");   // 默认精准解析
 })();
 </script>
 </body>
