@@ -123,6 +123,20 @@
   .empty{padding:46px 20px;text-align:center;color:var(--faint)}
   .legend{font-size:11.5px;color:var(--muted);margin-top:14px;line-height:1.85;padding-top:12px;border-top:1px solid var(--border)}
 
+  /* Tab 导航 */
+  .tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--border)}
+  .tab{padding:10px 18px;background:none;border:none;border-bottom:2px solid transparent;border-radius:8px 8px 0 0;color:var(--muted);font-size:13.5px;font-weight:600;cursor:pointer;box-shadow:none}
+  .tab:hover{filter:none;color:var(--text);background:rgba(255,255,255,.03)}
+  .tab.active{color:var(--text);border-bottom-color:var(--accent);background:rgba(77,141,255,.08)}
+
+  /* 结果工具栏 */
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .toolbar input,.toolbar select{width:auto;padding:7px 10px;font-size:12.5px}
+  .toolbar #tableSearch{min-width:180px}
+  .chk{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);white-space:nowrap}
+  .chk input{width:auto}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
+
   /* 模式选择 */
   .modes{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
   .mode{display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:12px 14px;background:var(--panel2);border:1px solid var(--border2);border-radius:11px;cursor:pointer;text-align:left;box-shadow:none;color:var(--text);transition:border-color .15s,background .15s}
@@ -177,6 +191,16 @@
 </header>
 
 <div class="wrap">
+
+  <!-- ============ Tab 导航 ============ -->
+  <div class="tabs" id="tabs">
+    <button type="button" class="tab active" data-tab="trade">📊 交易分析</button>
+    <button type="button" class="tab" data-tab="points">🏆 积分查询</button>
+    <button type="button" class="tab" data-tab="referral">🔗 邀请关系</button>
+  </div>
+
+  <!-- ============ Tab: 交易分析 ============ -->
+  <div class="tab-panel" data-panel="trade">
 
   <!-- ============ 查询表单 ============ -->
   <div class="card">
@@ -252,64 +276,55 @@
     <div id="actionBar" class="actionbar" style="display:none"></div>
   </div>
 
-  <!-- ============ 积分查询 ============ -->
-  <div class="card" id="pointsCard">
-    <div class="card-title">积分查询 · Points</div>
-    <div class="row" style="gap:10px">
-      <input id="pointsAddr" placeholder="0x… 钱包地址（也可点表格里的用户名）" style="flex:1;min-width:240px" />
-      <button id="pointsGo">查询积分</button>
-    </div>
-    <div id="pointsResult" class="hint" style="margin-top:12px">输入地址查询，或点击下方成交记录里的 <span class="uname-demo">@用户名</span> 自动查询其积分 / 持仓 / PNL。</div>
-  </div>
-
-  <!-- ============ 邀请关系查询 ============ -->
-  <div class="card" id="referralCard">
-    <div class="card-title">邀请关系 · Referral</div>
-    <div class="row" style="gap:10px">
-      <input id="refAddr" placeholder="0x… 钱包 / 邀请人地址" style="flex:1;min-width:240px" />
-      <input id="refDays" type="number" value="180" min="1" max="366" title="回溯天数（默认半年）" style="width:96px" />
-      <button id="refUp" class="secondary">查邀请人 ↑</button>
-      <button id="refDown">查下线 ↓</button>
-    </div>
-    <div class="hint" style="margin-top:6px">「查邀请人」= 谁邀请了该钱包；「查下线」= 该地址邀请了哪些用户。链上解析：有 BSC API Key 走 API（快），否则自动用 <b>RPC 分块扫描</b>（免费，较慢；天数大时请耐心）。</div>
-    <div id="refResult" style="margin-top:12px"></div>
-  </div>
-
   <!-- ============ 汇总 ============ -->
   <div class="card" id="summaryCard" style="display:none">
     <div class="card-title">汇总</div>
     <div class="stats" id="stats"></div>
-    <div class="legend">
-      <b>判定逻辑：</b>
-      <code>对手方</code> = 同一笔 tx 内所有 OrderFilled 的 maker/taker，剔除本钱包与 Exchange 撮合合约后剩下的真实地址。
-      <code>邀请人</code> = <code>ReferralFeeDistributed.referrer</code>；当同一笔 <code>FeeRefunded.to</code> 为本钱包且 <code>feeCharged&gt;0</code> 时标记为「本钱包相关」。
-      <code>净手续费</code> 取 <code>FeeRefunded.feeCharged</code>（退款后实际收取）。
-      <code>@用户名</code> / <code>市场名·网站</code> 由 Predict.fun GraphQL（<code>account(address).name</code> 与 <code>market(id).slug</code>）解析，需走 <code>/api/graphql</code>（部署到 Vercel）。地址会自动转 EIP-55 校验和。
-    </div>
+    <details class="adv" style="margin-top:12px">
+      <summary>判定逻辑说明</summary>
+      <div class="legend" style="border-top:none;padding-top:8px">
+        <code>对手方</code> = 同一笔 tx 内所有 OrderFilled 的 maker/taker，剔除本钱包与 Exchange 撮合合约后剩下的真实地址。
+        <code>邀请人</code> = <code>ReferralFeeDistributed.referrer</code>；当同一笔 <code>FeeRefunded.to</code> 为本钱包且 <code>feeCharged&gt;0</code> 时标记为「本钱包相关」。
+        <code>净手续费</code> 取 <code>FeeRefunded.feeCharged</code>（退款后实际收取）。
+        <code>@用户名</code> / <code>市场名·网站</code> 由 Predict.fun GraphQL 解析，需走 <code>/api/graphql</code>。地址会自动转 EIP-55 校验和。
+      </div>
+    </details>
   </div>
 
   <!-- ============ 结果表 ============ -->
   <div class="card">
-    <div class="card-title">成交记录</div>
+    <div class="row" style="justify-content:space-between;gap:10px;margin-bottom:12px">
+      <div class="card-title" style="margin:0">成交记录 <span id="rowCount" class="pill"></span></div>
+      <div class="toolbar" id="toolbar" style="display:none">
+        <input id="tableSearch" placeholder="搜索 市场 / 地址 / Tx" />
+        <select id="filterDir"><option value="">全部方向</option><option value="buy">买入</option><option value="sell">卖出</option></select>
+        <select id="filterRole"><option value="">全部角色</option><option value="maker">maker</option><option value="taker">taker</option></select>
+        <label class="chk"><input type="checkbox" id="filterRef" /> 有邀请人</label>
+        <select id="sortBy">
+          <option value="ts">时间 ↓</option>
+          <option value="usdt">金额 ↓</option>
+          <option value="fee">手续费 ↓</option>
+          <option value="price">均价 ↓</option>
+        </select>
+        <button class="secondary" id="exportCsv">导出 CSV</button>
+      </div>
+    </div>
     <div class="scroll">
       <table id="resultTable">
+        <caption class="sr-only">钱包成交记录：时间、市场、角色、方向、金额、份额、均价、手续费、对手方、邀请人、交易哈希</caption>
         <thead>
           <tr>
-            <th>时间</th>
-            <th>市场 / Token</th>
-            <th>角色</th>
-            <th>方向</th>
-            <th>稳定币 (USDT)</th>
-            <th>份额 Shares</th>
-            <th>均价</th>
-            <th>净手续费</th>
-            <th>对手方 Counterparty</th>
-            <th>邀请人 Referrer</th>
-            <th>Tx</th>
+            <th>时间</th><th>市场 / Token</th><th>角色</th><th>方向</th>
+            <th>稳定币 (USDT)</th><th>份额</th><th>均价</th><th>净手续费</th>
+            <th>对手方</th><th>邀请人</th><th>Tx</th>
           </tr>
         </thead>
         <tbody id="tbody">
-          <tr><td colspan="11" class="empty">填入钱包地址后点击「查询交易」</td></tr>
+          <tr><td colspan="11" class="empty">
+            <div style="font-size:15px;color:var(--text);margin-bottom:8px">输入钱包地址开始分析</div>
+            推荐先用「⚡ 快速查询」，天数 1–7 天。<br>
+            <span class="lnk" id="useExample">使用示例地址体验</span>
+          </td></tr>
         </tbody>
       </table>
     </div>
@@ -321,6 +336,35 @@
       <summary>技术日志（开发者）</summary>
       <div id="log" style="margin-top:10px"></div>
     </details>
+  </div>
+
+  </div><!-- /tab trade -->
+
+  <!-- ============ Tab: 积分查询 ============ -->
+  <div class="tab-panel" data-panel="points" style="display:none">
+    <div class="card" id="pointsCard">
+      <div class="card-title">积分查询 · Points</div>
+      <div class="row" style="gap:10px">
+        <input id="pointsAddr" placeholder="0x… 钱包地址（也可点交易分析里的 @用户名）" style="flex:1;min-width:240px" />
+        <button id="pointsGo">查询积分</button>
+      </div>
+      <div id="pointsResult" class="hint" style="margin-top:12px">输入地址查询其 OPINX 积分 / Predict 积分排名 / 持仓价值 / PNL。</div>
+    </div>
+  </div>
+
+  <!-- ============ Tab: 邀请关系 ============ -->
+  <div class="tab-panel" data-panel="referral" style="display:none">
+    <div class="card" id="referralCard">
+      <div class="card-title">邀请关系 · Referral</div>
+      <div class="row" style="gap:10px">
+        <input id="refAddr" placeholder="0x… 钱包 / 邀请人地址" style="flex:1;min-width:240px" />
+        <input id="refDays" type="number" value="180" min="1" max="366" title="回溯天数（默认半年）" style="width:96px" />
+        <button id="refUp" class="secondary">查邀请人 ↑</button>
+        <button id="refDown">查下线 ↓</button>
+      </div>
+      <div class="hint" style="margin-top:6px">「查邀请人」= 谁邀请了该钱包；「查下线」= 该地址邀请了哪些用户。链上解析：有 BSC API Key 走 API（快），否则自动用 <b>RPC 分块扫描</b>（免费，较慢）。</div>
+      <div id="refResult" style="margin-top:12px"></div>
+    </div>
   </div>
 
 </div>
@@ -363,6 +407,7 @@ const CHAIN_ID = 56;
  * ===================================================================== */
 const $ = id => document.getElementById(id);
 let aborted = false;
+let RESULTS = []; // 当前结果的 <tr> 列表（含 tr._rec），供筛选/排序/导出
 
 function log(msg, cls){
   const el = $("log");
@@ -1026,6 +1071,8 @@ async function run(){
   $("go").disabled = true; $("stop").disabled = false;
   const tbody = $("tbody"); tbody.innerHTML = "";
   $("summaryCard").style.display = "none";
+  $("toolbar").style.display = "none"; $("rowCount").textContent = "";
+  RESULTS = [];
   setProgress(0, 0);
 
   try{
@@ -1090,8 +1137,10 @@ async function run(){
       }
       const tr = renderRow(it, parsed, wallet);
       tbody.appendChild(tr);
+      RESULTS.push(tr);
       enrichRow(tr, parsed); // 异步补用户名 / 市场名（Predict GraphQL）
     }
+    if(RESULTS.length){ $("toolbar").style.display = "flex"; applyTableView(); }
 
     // 3) 汇总卡片
     $("summaryCard").style.display = "";
@@ -1164,13 +1213,17 @@ function addrCell(a, cls){
   // 地址 → 跳 Predict portfolio；.uname 占位（enrichRow 填 @用户名，可点击查积分）；⧉ 复制
   return `<a class="addr ${cls||''}" href="${portfolioUrl(a)}" target="_blank" title="打开 Predict portfolio">${short(a)}</a>`
        + `<span class="uname" data-addr="${a}" title="点击查询积分"></span>`
-       + `<span class="copy" onclick="copy('${a}')">⧉</span>`;
+       + `<span class="copy" role="button" aria-label="复制地址" onclick="copy('${a}')">⧉</span>`;
 }
 function renderRow(it, p, wallet){
   const tr = document.createElement("tr");
   const time = it.ts ? new Date(it.ts*1000).toLocaleString() : "—";
   const cid = (p && p.conditionId) || "";
   const mktTitle = it.market || "—";
+  // 供筛选/排序/导出用的结构化记录
+  const rec = { ts:it.ts||0, time, market:it.market||"", role:"", dir:"",
+    usdt:null, shares:null, price: it.avg_price?Number(it.avg_price):null, fee:null,
+    counterparties:[], referrers:[], tx:it.tx_hash };
 
   // 方向 & 份额 & 均价（从 receipt 推断）
   let dir="—", sharesTxt="—", priceTxt = it.avg_price ? Number(it.avg_price).toFixed(4) : "—";
@@ -1178,8 +1231,10 @@ function renderRow(it, p, wallet){
   let tokenHint = "";
   let cpHtml = it.counterparty ? addrCell((""+it.counterparty).toLowerCase()) : "—";
   let refHtml = "—";
+  if(it.counterparty) rec.counterparties.push((""+it.counterparty).toLowerCase());
 
   if(p){
+    rec.role = p.role || "";
     roleTxt = p.role ? `<span class="tag ${p.role}">${p.role}</span>` : "—";
     // 份额：取绝对值最大的 token
     const toks = Object.entries(p.sharesByToken).filter(([,v])=>v!==0n);
@@ -1187,26 +1242,30 @@ function renderRow(it, p, wallet){
       toks.sort((a,b)=>(b[1]<0n?-b[1]:b[1]) > (a[1]<0n?-a[1]:a[1]) ? 1 : -1);
       const [id,val] = toks[0];
       const net = val<0n ? -val : val;
-      sharesTxt = fmt(net,18,3);
+      sharesTxt = fmt(net,18,3); rec.shares = toNum(net);
       dir = val>0n ? `<span class="tag buy">BUY</span>` : `<span class="tag sell">SELL</span>`;
+      rec.dir = val>0n ? "buy" : "sell";
       tokenHint = `<div class="hint mono">#${id.slice(0,10)}…</div>`;
       // 均价 = USDT / 份额
       const usdt = val>0n ? p.usdtIn : p.usdtOut;
       const shares = toNum(net), money = toNum(usdt);
-      if(shares>0 && money>0) priceTxt = (money/shares).toFixed(4);
+      if(shares>0 && money>0){ priceTxt = (money/shares).toFixed(4); rec.price = money/shares; }
     }
     const netUsdt = p.usdtIn>0n ? p.usdtIn : p.usdtOut;
-    usdtTxt = fmt(netUsdt,18,4);
-    feeTxt = fmt(p.netFee,18,6);
+    usdtTxt = fmt(netUsdt,18,4); rec.usdt = toNum(netUsdt);
+    feeTxt = fmt(p.netFee,18,6); rec.fee = toNum(p.netFee);
+    rec.counterparties = [...p.counterparties];
     cpHtml = p.counterparties.size
       ? [...p.counterparties].map(c=>addrCell(c)).join("<br>") : "—";
     if(p.referrers.size){
+      rec.referrers = [...p.referrers];
       refHtml = [...p.referrers].map(r=>{
         const mine = p.walletReferrers.has(r);
         return addrCell(r,"") + (mine?` <span class="tag ref">本钱包</span>`:"");
       }).join("<br>");
     }
   }
+  tr._rec = rec;
   // 市场名/链接：优先用来源(OPinX/官方)已带的 title+slug，直接出链接；
   // 没有 title 时留 .mkt 占位，由 enrichRow 用 conditionId 走 GraphQL 索引补。
   const srcUrl = marketUrl(it.slug, it.marketId);
@@ -1365,6 +1424,66 @@ $("go").addEventListener("click", run);
 $("stop").addEventListener("click", ()=>{ aborted=true; setStatus("停止中…"); });
 $("wallet").addEventListener("keydown", e=>{ if(e.key==="Enter") run(); });
 $("wallet").addEventListener("input", validateWallet);
+
+/* ---- Tab 切换 ---- */
+document.querySelectorAll(".tab").forEach(t=> t.addEventListener("click", ()=>{
+  const name = t.dataset.tab;
+  document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active", x===t));
+  document.querySelectorAll(".tab-panel").forEach(p=> p.style.display = (p.dataset.panel===name)?"":"none");
+}));
+
+/* ---- 结果表 筛选 / 排序 / 导出 ---- */
+function applyTableView(){
+  const q = ($("tableSearch").value||"").trim().toLowerCase();
+  const fDir = $("filterDir").value, fRole = $("filterRole").value, fRef = $("filterRef").checked;
+  const sortKey = $("sortBy").value;
+  const tbody = $("tbody");
+  let shown = 0;
+  const visible = [];
+  for(const tr of RESULTS){
+    const r = tr._rec || {};
+    let ok = true;
+    if(fDir && r.dir!==fDir) ok=false;
+    if(ok && fRole && r.role!==fRole) ok=false;
+    if(ok && fRef && !(r.referrers&&r.referrers.length)) ok=false;
+    if(ok && q){
+      const hay = [r.market, r.tx, ...(r.counterparties||[]), ...(r.referrers||[])].join(" ").toLowerCase();
+      if(!hay.includes(q)) ok=false;
+    }
+    tr.style.display = ok ? "" : "none";
+    if(ok){ shown++; visible.push(tr); }
+  }
+  // 排序（可见行重排到 DOM）
+  const dir = -1; // 降序
+  visible.sort((a,b)=>{
+    const x=a._rec||{}, y=b._rec||{};
+    const va = x[sortKey]==null?-Infinity:x[sortKey], vb = y[sortKey]==null?-Infinity:y[sortKey];
+    return (va-vb)*dir;
+  });
+  visible.forEach(tr=>tbody.appendChild(tr));
+  $("rowCount").textContent = shown===RESULTS.length ? `${RESULTS.length} 笔` : `${shown}/${RESULTS.length} 笔`;
+}
+["tableSearch","filterDir","filterRole","filterRef","sortBy"].forEach(id=>{
+  $(id).addEventListener("input", applyTableView);
+  $(id).addEventListener("change", applyTableView);
+});
+function exportCsv(){
+  const head = ["时间","市场","角色","方向","USDT","份额","均价","净手续费","对手方","邀请人","Tx"];
+  const rows = RESULTS.filter(tr=>tr.style.display!=="none").map(tr=>{
+    const r = tr._rec||{};
+    return [r.time, r.market, r.role, r.dir, r.usdt, r.shares, r.price, r.fee,
+      (r.counterparties||[]).join("|"), (r.referrers||[]).join("|"), r.tx];
+  });
+  const esc = v => { const s = v==null?"":String(v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
+  const csv = "﻿" + [head, ...rows].map(r=>r.map(esc).join(",")).join("\r\n");
+  const blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `predict-trades-${$("wallet").value.trim().slice(0,10)}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+$("exportCsv").addEventListener("click", exportCsv);
+$("useExample").addEventListener("click", ()=>{ $("wallet").value="0xab929df893b7e6202539aae41c86afc7ab575821"; validateWallet(); run(); });
 
 /* ---- 模式 / 动态字段 / 密码显隐 ---- */
 const MODES = {
