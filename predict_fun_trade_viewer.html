@@ -393,7 +393,7 @@
       <div class="card-title">邀请关系 · Referral</div>
       <textarea id="refAddr" rows="2" placeholder="0x… 钱包 / 邀请人地址；支持批量：每行一个，或用空格 / 逗号分隔" style="width:100%;resize:vertical"></textarea>
       <div class="row" style="gap:10px;margin-top:10px">
-        <input id="refDays" type="number" value="180" min="1" max="366" title="回溯天数（默认半年）" style="width:110px" />
+        <input id="refDays" type="number" value="30" min="1" max="366" title="回溯天数（默认近 1 个月）" style="width:110px" />
         <label class="chk" title="从最新往回扫，遇连续空段即停；更快，但可能漏掉更早的记录"><input type="checkbox" id="refFast" checked /> 快速模式</label>
         <button id="refUp" class="secondary">查邀请人 ↑</button>
         <button id="refDown">查下线 ↓</button>
@@ -1830,7 +1830,7 @@ applyTheme(LS.get("theme", "dark"));
 ["days","refDays"].forEach(id=> $(id).addEventListener("change", ()=>LS.set(id, $(id).value)));
 $("wallet").addEventListener("change", ()=>{ const v=$("wallet").value.trim(); if(isAddr(v)) LS.set("wallet", v); });
 $("days").value = LS.get("days", "1");
-$("refDays").value = LS.get("refDays", "180");
+$("refDays").value = LS.get("refDays", "30");
 $("wallet").value = LS.get("wallet", "0xab929df893b7e6202539aae41c86afc7ab575821");
 validateWallet();
 
