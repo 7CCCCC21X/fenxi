@@ -728,7 +728,13 @@ async function listFromOpinx(wallet, days, base){
           marketId: c.marketId || prev.marketId,
           outcome: c.outcome || prev.outcome,
           counterparty: node.counterparty || prev.counterparty,
-          avg_price: node.avg_price || node.priceExecuted || prev.avg_price,
+          avg_price: node.avg_price ?? node.priceExecuted ?? node.price_executed ?? node.price ?? prev.avg_price,
+          // 快速模式（无 receipt）直接展示 OPinX 自带字段
+          side: node.user_side ?? node.side ?? node.direction ?? prev.side,
+          role: node.user_role ?? node.role ?? prev.role,
+          fee: node.fee ?? node.fee_usdt ?? node.sum_fee_usdt ?? node.feeUsd ?? prev.fee,
+          usdt: node.usdt ?? node.usdt_amount ?? node.value_usdt ?? node.valueUsd ?? node.collateral ?? node.amount_usdt ?? prev.usdt,
+          shares: node.shares ?? node.amount_filled ?? node.amountFilled ?? node.size ?? node.share_amount ?? prev.shares,
         });
       }
       Object.values(node).forEach(v=>walk(v, c));
@@ -1315,6 +1321,20 @@ function renderRow(it, p, wallet){
         return addrCell(r,"") + (mine?` <span class="tag ref">本钱包</span>`:"");
       }).join("<br>");
     }
+  }
+  // 快速模式（无 receipt）：用 OPinX 自带字段填角色/方向/金额/份额/手续费
+  if(!p){
+    const sNum = v => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+    if(it.role){ const r=String(it.role).toLowerCase(); if(r==="maker"||r==="taker"){ rec.role=r; roleTxt=`<span class="tag ${r}">${r}</span>`; } }
+    if(it.side){ const s=String(it.side).toLowerCase();
+      if(/buy|bid|long/.test(s)){ rec.dir="buy"; dir=`<span class="tag buy">BUY</span>`; }
+      else if(/sell|ask|short/.test(s)){ rec.dir="sell"; dir=`<span class="tag sell">SELL</span>`; } }
+    const u=sNum(it.usdt); if(u!=null){ rec.usdt=u; usdtTxt=u.toLocaleString(undefined,{maximumFractionDigits:4}); }
+    const sh=sNum(it.shares); if(sh!=null){ rec.shares=sh; sharesTxt=sh.toLocaleString(undefined,{maximumFractionDigits:3}); }
+    const fe=sNum(it.fee); if(fe!=null){ rec.fee=fe; feeTxt=fe.toLocaleString(undefined,{maximumFractionDigits:6}); }
+    if(rec.price==null && it.avg_price!=null){ const pr=sNum(it.avg_price); if(pr!=null) rec.price=pr; }
+    // 价没份额时，若有 usdt 与 shares 可算
+    if((priceTxt==="—") && rec.usdt!=null && rec.shares){ priceTxt=(rec.usdt/rec.shares).toFixed(4); rec.price=rec.usdt/rec.shares; }
   }
   tr._rec = rec;
   // 市场名/链接：优先用来源(OPinX/官方)已带的 title+slug，直接出链接；
