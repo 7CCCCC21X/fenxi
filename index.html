@@ -331,6 +331,7 @@
         <select id="filterDir"><option value="">全部方向</option><option value="buy">买入</option><option value="sell">卖出</option></select>
         <select id="filterRole"><option value="">全部角色</option><option value="maker">maker</option><option value="taker">taker</option></select>
         <label class="chk"><input type="checkbox" id="filterRef" /> 有邀请人</label>
+        <label class="chk" title="按对手方聚合：每个对手方一行，显示笔数与合计"><input type="checkbox" id="dedupCp" /> 对手方去重</label>
         <input type="date" id="filterFrom" title="起始日期" />
         <span class="chk">–</span>
         <input type="date" id="filterTo" title="结束日期" />
@@ -450,6 +451,7 @@ const $ = id => document.getElementById(id);
 let aborted = false;
 let RESULTS = []; // 当前结果的 <tr> 列表（含 tr._rec），供筛选/排序/导出
 let RUN_ID = 0;   // 每次查询自增；后台任务据此判断是否已过期
+let LAST_ENRICH = "rpc";
 
 function log(msg, cls){
   const el = $("log");
@@ -1178,7 +1180,7 @@ async function run(){
   if(!validateWallet()){ $("wallet").focus(); return; }
   const days = Math.max(1, Math.min(90, Number($("days").value)||1));
   const source = $("source").value;
-  const enrich = $("enrich").value;
+  const enrich = $("enrich").value; LAST_ENRICH = enrich;
   const bscKey = $("bscKey").value.trim();
   const rpcUrl = $("rpcUrl").value.trim() || "https://bsc-dataseed.bnbchain.org";
   const predictKey = $("predictKey").value.trim();
@@ -1191,6 +1193,7 @@ async function run(){
   $("summaryCard").style.display = "none";
   $("toolbar").style.display = "none"; $("rowCount").textContent = "";
   $("tableNote").style.display = "none";
+  DEDUP = false; $("dedupCp").checked = false;
   HIDEABLE_COLS.forEach(c=>setColVisible(c.label, true)); // 复位列可见性
   RESULTS = [];
   setProgress(0, 0);
@@ -1687,6 +1690,7 @@ function applyTableView(){
     tr.style.display = ok ? "" : "none";
     if(ok){ shown++; visible.push(tr); }
   }
+  if(DEDUP){ renderDedupRows(visible); updateSortArrows(); return; }
   visible.sort((a,b)=>{
     const va = (a._rec||{})[SORT.key], vb = (b._rec||{})[SORT.key];
     const na = va==null?-Infinity:va, nb = vb==null?-Infinity:vb;
@@ -1695,6 +1699,44 @@ function applyTableView(){
   visible.forEach(tr=>tbody.appendChild(tr));
   $("rowCount").textContent = shown===RESULTS.length ? `${RESULTS.length} 笔` : `${shown}/${RESULTS.length} 笔`;
   updateSortArrows();
+}
+// 对手方去重：把可见交易按对手方聚合成一行
+let DEDUP = false;
+function renderDedupRows(visible){
+  const map = new Map();
+  for(const tr of visible){
+    const r = tr._rec || {};
+    for(const cp of (r.counterparties||[])){
+      if(!/^0x[a-fA-F0-9]{40}$/.test(cp)) continue;
+      const m = map.get(cp) || { addr:cp, count:0, usdt:0, shares:0, fee:0, ts:0, market:"" };
+      m.count++; m.usdt += r.usdt||0; m.shares += r.shares||0; m.fee += r.fee||0;
+      if((r.ts||0) > m.ts){ m.ts = r.ts; m.market = r.market; }
+      map.set(cp, m);
+    }
+  }
+  const rows = [...map.values()].sort((a,b)=> b.usdt-a.usdt || b.count-a.count);
+  const tbody = $("tbody"); tbody.innerHTML = "";
+  for(const m of rows){
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td class="selcol"><input type="checkbox" class="rowsel" /></td>`
+      + `<td data-label="时间">${m.ts?new Date(m.ts*1000).toLocaleDateString():"—"}</td>`
+      + `<td data-label="市场">${m.market||"—"}</td>`
+      + `<td data-label="角色">—</td><td data-label="方向">—</td>`
+      + `<td class="num" data-label="USDT">${m.usdt.toLocaleString(undefined,{maximumFractionDigits:2})}</td>`
+      + `<td class="num" data-label="份额">${m.shares.toLocaleString(undefined,{maximumFractionDigits:2})}</td>`
+      + `<td class="num" data-label="均价">—</td>`
+      + `<td class="num" data-label="净手续费">${m.fee.toLocaleString(undefined,{maximumFractionDigits:4})}</td>`
+      + `<td data-label="对手方">${addrCell(m.addr)}</td>`
+      + `<td data-label="邀请人">—</td>`
+      + `<td data-label="Tx"><b>${m.count}</b> 笔</td>`;
+    tbody.appendChild(tr);
+    // 用户名 + 已缓存的对手方邀请人
+    enrichRow(tr, null);
+    const ref = _cpRefCache.get(m.addr), el = tr.querySelector(".cpref");
+    if(el && _cpRefCache.has(m.addr)) el.innerHTML = ref ? `<span class="hint">↑邀请人 ${personHtml(ref)}</span>` : `<span class="hint">↑邀请人：未找到</span>`;
+  }
+  $("rowCount").textContent = `${rows.length} 个对手方（去重自 ${visible.length} 笔）`;
 }
 function updateSortArrows(){
   document.querySelectorAll("th[data-sort]").forEach(th=>{
@@ -1713,6 +1755,13 @@ function setSort(key){
   $(id).addEventListener("change", applyTableView);
 });
 $("sortBy").addEventListener("change", ()=>{ SORT.key=$("sortBy").value; SORT.dir=-1; applyTableView(); });
+$("dedupCp").addEventListener("change", ()=>{
+  DEDUP = $("dedupCp").checked;
+  if(DEDUP){ ["角色","方向","均价"].forEach(c=>setColVisible(c,false)); setColVisible("市场",true); }
+  else { ["角色","方向","均价","市场"].forEach(c=>setColVisible(c,true)); }
+  applyTableView();
+  if(!DEDUP) autoHideEmptyColumns(LAST_ENRICH);
+});
 document.querySelectorAll("th[data-sort]").forEach(th=> th.addEventListener("click", ()=>setSort(th.getAttribute("data-sort"))));
 function exportCsv(){
   const head = ["时间","市场","角色","方向","USDT","份额","均价","净手续费","对手方","邀请人","Tx"];
