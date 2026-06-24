@@ -947,8 +947,9 @@ async function scanLogsRange(topics, fromBlock, toBlock, onProgress, address, op
   const out=[]; let size = Math.max(1, toBlock - fromBlock + 1);
   const shrink = e => { if(!isRangeErr(e)) throw e; if(size>49000) size=49000; else if(size>2000) size=Math.floor(size/2); else throw e; };
   if(opts.backward){
-    // 倒序 + 连续空段即停
-    let to=toBlock, emptyStreak=0; const STOP = opts.emptyStop || 2;
+    // 倒序扫描：找到第一条记录之前不停（否则活动较早时会误判为“无”）；
+    // 命中后再遇连续空段才停（快速模式：只是跳过活动簇之后的更早空白）。
+    let to=toBlock, emptyStreak=0, seenAny=false; const STOP = opts.emptyStop || 2;
     while(to>=fromBlock){
       if(aborted) break;
       const from = Math.max(fromBlock, to - size + 1);
@@ -956,8 +957,9 @@ async function scanLogsRange(topics, fromBlock, toBlock, onProgress, address, op
       try{ part = await getLogsWindow(topics, from, to, address); }
       catch(e){ shrink(e); continue; }
       out.push(...part);
+      if(part.length){ seenAny = true; emptyStreak = 0; }
       if(from===fromBlock && to===toBlock) break;     // 整段一次就拿完（宽容节点）
-      if(part.length===0){ if(++emptyStreak>=STOP){ opts.stopped=true; break; } } else emptyStreak=0;
+      if(part.length===0 && seenAny){ if(++emptyStreak>=STOP){ opts.stopped=true; break; } }
       to = from-1;
       onProgress && onProgress(toBlock-to, toBlock-fromBlock, out.length);
       if(to>=fromBlock) await sleep(60);
