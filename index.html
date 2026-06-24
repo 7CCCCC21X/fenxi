@@ -379,6 +379,7 @@
       <textarea id="refAddr" rows="2" placeholder="0x… 钱包 / 邀请人地址；支持批量：每行一个，或用空格 / 逗号分隔" style="width:100%;resize:vertical"></textarea>
       <div class="row" style="gap:10px;margin-top:10px">
         <input id="refDays" type="number" value="180" min="1" max="366" title="回溯天数（默认半年）" style="width:110px" />
+        <label class="chk" title="从最新往回扫，遇连续空段即停；更快，但可能漏掉更早的记录"><input type="checkbox" id="refFast" checked /> 快速模式</label>
         <button id="refUp" class="secondary">查邀请人 ↑</button>
         <button id="refDown">查下线 ↓</button>
       </div>
@@ -894,27 +895,40 @@ async function getLogsWindow(topics, from, to, address){
   return await rpcCall("eth_getLogs", [filter]);
 }
 
-// 扫描一段区间的日志。按合约地址 + 邀请人 topic 过滤后结果极少，故先“整段一次查询”；
-// 仅当节点拒绝（区块范围/条数超限）才自适应减半，逐步收敛到该节点允许的最大窗口。
-async function scanLogsRange(topics, fromBlock, toBlock, onProgress, address){
-  const out=[]; let size = Math.max(1, toBlock - fromBlock + 1); let from=fromBlock;
+// 扫描一段区间的日志。默认正序整段查询；opts.backward 时从最新往回扫，连续空段即停（快速模式）
+async function scanLogsRange(topics, fromBlock, toBlock, onProgress, address, opts){
+  opts = opts || {};
+  const out=[]; let size = Math.max(1, toBlock - fromBlock + 1);
+  const shrink = e => { if(!isRangeErr(e)) throw e; if(size>49000) size=49000; else if(size>2000) size=Math.floor(size/2); else throw e; };
+  if(opts.backward){
+    // 倒序 + 连续空段即停
+    let to=toBlock, emptyStreak=0; const STOP = opts.emptyStop || 2;
+    while(to>=fromBlock){
+      if(aborted) break;
+      const from = Math.max(fromBlock, to - size + 1);
+      let part;
+      try{ part = await getLogsWindow(topics, from, to, address); }
+      catch(e){ shrink(e); continue; }
+      out.push(...part);
+      if(from===fromBlock && to===toBlock) break;     // 整段一次就拿完（宽容节点）
+      if(part.length===0){ if(++emptyStreak>=STOP){ opts.stopped=true; break; } } else emptyStreak=0;
+      to = from-1;
+      onProgress && onProgress(toBlock-to, toBlock-fromBlock, out.length);
+      if(to>=fromBlock) await sleep(60);
+    }
+    return out;
+  }
+  // 正序
+  let from=fromBlock;
   while(from<=toBlock){
     if(aborted) break;
     const to=Math.min(toBlock, from+size-1);
     let part;
     try{ part = await getLogsWindow(topics, from, to, address); }
-    catch(e){
-      if(isRangeErr(e)){
-        if(size>49000) size=49000;            // 多数节点上限≈50000，直接跳到该档，少走弯路
-        else if(size>2000) size=Math.floor(size/2);
-        else throw e;
-        continue;
-      }
-      throw e;
-    }
+    catch(e){ shrink(e); continue; }
     out.push(...part); from=to+1;
     onProgress && onProgress(from-fromBlock, toBlock-fromBlock, out.length);
-    if(from<=toBlock) await sleep(80); // 整段命中时基本不触发
+    if(from<=toBlock) await sleep(80);
   }
   return out;
 }
@@ -982,10 +996,13 @@ async function findInvitees(address, days, onProgress){
   const tip = await blockTip();
   const fromBlock = await blockFromTime(Math.floor(Date.now()/1000) - days*86400);
   const topics = [T.REFERRAL, padTopic(address)];
-  let logs = [];
+  const fast = !!(document.getElementById("refFast") && document.getElementById("refFast").checked);
+  let logs = []; let stopped=false;
   for(const mod of FEE_MODULES){
     if(aborted) break;
-    logs.push(...await scanLogsRange(topics, fromBlock, tip, (d,t)=>onProgress && onProgress("扫描日志", d, t, logs.length), mod));
+    const opts = { backward:fast, emptyStop:2 };
+    logs.push(...await scanLogsRange(topics, fromBlock, tip, (d,t)=>onProgress && onProgress("扫描日志", d, t, logs.length), mod, opts));
+    if(opts.stopped) stopped=true;
   }
   const txs = [...new Set(logs.map(l=>l.transactionHash.toLowerCase()))];
   const cap=400; const slice = txs.slice(0, cap);
@@ -995,7 +1012,7 @@ async function findInvitees(address, days, onProgress){
     if(u){ const cur = invitees.get(u)||{count:0}; cur.count++; invitees.set(u, cur); } // get/set 同步、无竞态
     done++; onProgress && onProgress("解析返佣", done, slice.length, invitees.size);
   }, RECEIPT_CONC);
-  return { invitees, scanned:done, total:txs.length, capped: txs.length>cap };
+  return { invitees, scanned:done, total:txs.length, capped: txs.length>cap, earlyStopped:stopped };
 }
 
 /* =====================================================================
@@ -1431,10 +1448,11 @@ async function doFindInvitees(){
   const addrs = parseAddrs($("refAddr").value);
   if(addrs.length===0){ box.innerHTML = `<span class="err">请输入至少一个合法地址</span>`; return; }
   aborted = false; const days = refDaysVal();
-  const renderOne = (addr, invitees, scanned, total, capped) => {
+  const renderOne = (addr, invitees, scanned, total, capped, earlyStopped) => {
     const rows = [...invitees.entries()].sort((a,b)=>b[1].count-a[1].count);
+    const note = earlyStopped ? `（快速模式：遇连续空段提前停止，更早的下线可能未统计）` : (capped?"，已截断":"");
     if(invitees.size===0) return `<div class="hint" style="margin:6px 0">${personHtml(addr)}：未发现下线（最近 ${days} 天无返佣）。</div>`;
-    return `<div style="margin:10px 0 6px">邀请人 ${personHtml(addr)} 共邀请 <b>${invitees.size}</b> 个用户（扫描 ${scanned}/${total} 笔${capped?"，已截断":""}）：</div>`
+    return `<div style="margin:10px 0 6px">邀请人 ${personHtml(addr)} 共邀请 <b>${invitees.size}</b> 个用户（扫描 ${scanned}/${total} 笔${note}）：</div>`
       + `<div class="scroll" style="max-height:40vh"><table><thead><tr><th>#</th><th>下线用户</th><th>返佣笔数</th></tr></thead><tbody>`
       + rows.map(([a,info],i)=>`<tr><td>${i+1}</td><td>${personHtml(a)}</td><td class="num">${info.count}</td></tr>`).join("")
       + `</tbody></table></div>`;
@@ -1442,9 +1460,9 @@ async function doFindInvitees(){
   try{
     if(addrs.length===1){
       box.innerHTML = `<span class="pill busy">查下线中…（回溯 ${days} 天）</span>`;
-      const { invitees, scanned, total, capped } = await findInvitees(addrs[0], days,
+      const { invitees, scanned, total, capped, earlyStopped } = await findInvitees(addrs[0], days,
         (label,d,t,n)=>{ box.innerHTML = `<span class="pill busy">${label} ${d}/${t}${n!=null?`，已发现 ${n} 个下线`:""}…</span>`; });
-      box.innerHTML = renderOne(addrs[0], invitees, scanned, total, capped);
+      box.innerHTML = renderOne(addrs[0], invitees, scanned, total, capped, earlyStopped);
       fillRefNames(box); return;
     }
     // 批量
@@ -1453,8 +1471,8 @@ async function doFindInvitees(){
       if(aborted) break;
       box.innerHTML = html + `<span class="pill busy">批量查下线 ${i+1}/${addrs.length}（${short(addrs[i])}）…</span>`;
       try{
-        const { invitees, scanned, total, capped } = await findInvitees(addrs[i], days);
-        html += renderOne(addrs[i], invitees, scanned, total, capped);
+        const { invitees, scanned, total, capped, earlyStopped } = await findInvitees(addrs[i], days);
+        html += renderOne(addrs[i], invitees, scanned, total, capped, earlyStopped);
       }catch(e){ html += `<div class="err" style="margin:6px 0">${short(addrs[i])}: ${e.message}</div>`; }
       box.innerHTML = html; fillRefNames(box);
     }
