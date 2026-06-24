@@ -437,6 +437,7 @@ const CHAIN_ID = 56;
 const $ = id => document.getElementById(id);
 let aborted = false;
 let RESULTS = []; // 当前结果的 <tr> 列表（含 tr._rec），供筛选/排序/导出
+let RUN_ID = 0;   // 每次查询自增；后台任务据此判断是否已过期
 
 function log(msg, cls){
   const el = $("log");
@@ -642,9 +643,19 @@ function esUrl(params, key){
 }
 
 async function fetchJSON(url, opts){
+  opts = opts || {};
+  // 加超时：节点/接口挂起时不至于一直卡住
+  const ctrl = new AbortController();
+  const ms = opts.timeout || 22000;
+  const timer = setTimeout(()=>ctrl.abort(), ms);
   let r;
-  try{ r = await fetch(url, opts); }
-  catch(e){ throw new Error("网络/CORS 失败（可能被对方接口拒绝跨域）: "+e.message); }
+  try{ r = await fetch(url, { ...opts, signal: ctrl.signal }); }
+  catch(e){
+    clearTimeout(timer);
+    if(e.name==="AbortError") throw new Error(`请求超时（${Math.round(ms/1000)}s）：${typeof url==="string"?url:url.toString()}`);
+    throw new Error("网络/CORS 失败（可能被对方接口拒绝跨域）: "+e.message);
+  }
+  clearTimeout(timer);
   const txt = await r.text();
   let j = null; try{ j = JSON.parse(txt); }catch(_){ /* 非 JSON：保留原文 */ }
   return { ok:r.ok, status:r.status, json:j, text:txt };
@@ -1115,6 +1126,7 @@ function parseReceipt(receipt, wallet){
  * ===================================================================== */
 async function run(){
   aborted = false;
+  const myRun = ++RUN_ID;
   $("log").innerHTML = "";
   hideAction();
   const wallet = $("wallet").value.trim();
@@ -1203,7 +1215,10 @@ async function run(){
       RESULTS.push(tr);
       enrichRow(tr, parsed); // 异步补用户名 / 市场名（Predict GraphQL）
     }
-    if(RESULTS.length){ $("toolbar").style.display = "flex"; populateMarketFilter(); applyTableView(); autoHideEmptyColumns(enrich); }
+    if(RESULTS.length){
+      $("toolbar").style.display = "flex"; populateMarketFilter(); applyTableView(); autoHideEmptyColumns(enrich);
+      if(enrich!=="none") autoResolveCpReferrers(myRun); // 精准模式：后台自动解析对手方邀请人
+    }
 
     // 3) 汇总卡片
     $("summaryCard").style.display = "";
@@ -1695,6 +1710,31 @@ async function resolveCpReferrers(){
   btn.disabled = false; btn.textContent = orig;
 }
 $("cpRefBtn").addEventListener("click", resolveCpReferrers);
+
+// 查询后自动在后台解析对手方邀请人（谁先查到先显示；缓存复用；过期查询自动放弃）
+async function autoResolveCpReferrers(runId){
+  const persons = [...document.querySelectorAll('#resultTable td[data-label="对手方"] .person[data-addr]')];
+  if(!persons.length) return;
+  const fill = (addr, ref) => persons.filter(p=>p.getAttribute("data-addr")===addr).forEach(p=>{
+    const el = p.querySelector(".cpref"); if(!el) return;
+    el.innerHTML = ref ? `<span class="hint">↑邀请人 ${personHtml(ref)}</span>` : `<span class="hint">↑邀请人：未找到</span>`;
+  });
+  // 已缓存的立刻填；未缓存的标记“查询中…”
+  const todo = [];
+  for(const addr of new Set(persons.map(p=>p.getAttribute("data-addr")))){
+    if(_cpRefCache.has(addr)) fill(addr, _cpRefCache.get(addr));
+    else { todo.push(addr); persons.filter(p=>p.getAttribute("data-addr")===addr).forEach(p=>{ const el=p.querySelector(".cpref"); if(el&&!el.innerHTML) el.innerHTML=`<span class="hint">↑邀请人 查询中…</span>`; }); }
+  }
+  const days = 180;
+  await pMap(todo, async addr=>{
+    if(runId!==RUN_ID || aborted) return;
+    try{ const r = await findReferrer(addr, days); _cpRefCache.set(addr, r&&r.referrer||null); }
+    catch(_){ _cpRefCache.set(addr, null); }
+    if(runId!==RUN_ID) return;          // 已开始新查询 → 放弃写入
+    fill(addr, _cpRefCache.get(addr));   // 查到即显示
+    fillRefNames($("tbody"));
+  }, 2);
+}
 
 /* ---- 模式 / 动态字段 / 密码显隐 ---- */
 const MODES = {
