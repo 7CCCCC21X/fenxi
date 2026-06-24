@@ -86,7 +86,7 @@
   table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
   th,td{text-align:left;padding:11px 13px;vertical-align:top;white-space:nowrap}
   td{border-top:1px solid var(--border)}
-  th{color:var(--faint);font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;position:sticky;top:0;z-index:1;background:#10151e;backdrop-filter:blur(4px)}
+  th{color:var(--muted);font-weight:700;font-size:11.5px;letter-spacing:.4px;position:sticky;top:0;z-index:1;background:#10151e;backdrop-filter:blur(4px)}
   tbody tr{transition:background .12s}
   tbody tr:nth-child(even) td{background:rgba(255,255,255,.012)}
   tbody tr:hover td{background:rgba(77,141,255,.07)}
@@ -123,10 +123,46 @@
   .empty{padding:46px 20px;text-align:center;color:var(--faint)}
   .legend{font-size:11.5px;color:var(--muted);margin-top:14px;line-height:1.85;padding-top:12px;border-top:1px solid var(--border)}
 
-  @media(max-width:640px){
+  /* 模式选择 */
+  .modes{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .mode{display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:12px 14px;background:var(--panel2);border:1px solid var(--border2);border-radius:11px;cursor:pointer;text-align:left;box-shadow:none;color:var(--text);transition:border-color .15s,background .15s}
+  .mode:hover{filter:none;background:#202a3a;border-color:#3b485e}
+  .mode b{font-size:13.5px;font-weight:700}
+  .mode small{font-size:11px;color:var(--muted);font-weight:400}
+  .mode.active{border-color:var(--accent);background:linear-gradient(180deg,rgba(77,141,255,.16),rgba(124,92,255,.06));box-shadow:0 0 0 3px rgba(77,141,255,.14)}
+
+  /* 字段校验 / 链接 / 显示密码 */
+  .field-err{color:var(--red);font-size:11.5px;margin-top:5px}
+  input.invalid{border-color:var(--red);box-shadow:0 0 0 3px rgba(255,107,107,.15)}
+  input.valid{border-color:rgba(70,208,127,.5)}
+  .lnk{color:var(--accent);cursor:pointer;user-select:none}
+  .lnk:hover{text-decoration:underline}
+  .adv summary{cursor:pointer}
+
+  /* 进度条 */
+  .progress{margin-top:12px;height:6px;border-radius:99px;background:var(--panel3);overflow:hidden}
+  .progress > div{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .25s}
+
+  /* 可操作错误条 */
+  .actionbar{padding:11px 14px;border-radius:10px;background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.35);font-size:12.5px;color:#ffc9c9}
+  .actionbar .acts{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
+  .actionbar button{padding:6px 12px;font-size:12px;border-radius:8px;background:var(--panel3);border:1px solid var(--border2);color:var(--text);box-shadow:none}
+  .actionbar button:hover{background:#2a3445;filter:none}
+
+  @media(max-width:760px){
+    .modes{grid-template-columns:1fr}
     .wrap{padding:14px}
     header p{display:none}
     .card{padding:14px}
+    /* 结果表 → 卡片 */
+    table#resultTable thead{display:none}
+    table#resultTable, table#resultTable tbody, table#resultTable tr, table#resultTable td{display:block;width:auto}
+    table#resultTable tr{border:1px solid var(--border);border-radius:11px;margin-bottom:10px;padding:8px 10px;background:var(--panel2)}
+    table#resultTable td{border:none;padding:5px 2px;white-space:normal;text-align:left}
+    table#resultTable td.num{text-align:left}
+    table#resultTable td::before{content:attr(data-label);display:inline-block;min-width:84px;color:var(--faint);font-size:11px;font-weight:600;margin-right:8px}
+    table#resultTable td[data-label="时间"]{font-weight:700;border-bottom:1px solid var(--border);padding-bottom:7px;margin-bottom:4px}
+    .scroll{max-height:none;border:none}
   }
 </style>
 </head>
@@ -144,54 +180,64 @@
 
   <!-- ============ 查询表单 ============ -->
   <div class="card">
-    <div class="card-title">查询条件</div>
+    <div class="card-title">交易分析</div>
     <div id="srvBanner" class="banner" style="display:none"></div>
-    <div class="grid">
+
+    <!-- 模式选择 -->
+    <div class="modes" id="modes">
+      <button type="button" class="mode active" data-mode="fast"><b>⚡ 快速查询</b><small>最快 · 免 Key · 先看有没有交易</small></button>
+      <button type="button" class="mode" data-mode="precise"><b>🔍 精准解析</b><small>解析对手方 / 邀请人 · 较慢</small></button>
+      <button type="button" class="mode" data-mode="advanced"><b>⛓️ 高级扫链</b><small>最底层 · 可能慢 · 需 API/RPC</small></button>
+    </div>
+
+    <div class="grid" style="margin-top:14px">
       <div>
-        <label>钱包地址 Wallet</label>
-        <input id="wallet" placeholder="0xab929df893b7e6202539aae41c86afc7ab575821" />
+        <label for="wallet">钱包地址 Wallet</label>
+        <input id="wallet" autocomplete="off" spellcheck="false" placeholder="0x… 40 位钱包地址" aria-describedby="walletErr" />
+        <div id="walletErr" class="field-err" style="display:none"></div>
       </div>
       <div>
-        <label>天数 Days</label>
+        <label for="days">天数 Days</label>
         <input id="days" type="number" value="1" min="1" max="90" />
-      </div>
-      <div>
-        <label>交易来源 Source</label>
-        <select id="source">
-          <option value="opinx">OPinX / predalpha（免 Key）</option>
-          <option value="predict">Predict.fun 官方 /v1/orders/matches</option>
-          <option value="bsc">BSC 直接扫链（仅需 BSC Key）</option>
-        </select>
-      </div>
-      <div>
-        <label>链上解析方式 Enrich</label>
-        <select id="enrich">
-          <option value="rpc" selected>BSC RPC（免 Key，推荐）</option>
-          <option value="bscapi">BSC API（Etherscan V2）</option>
-          <option value="none">不解析（只看来源数据）</option>
-        </select>
       </div>
     </div>
 
-    <details class="adv" open>
-      <summary>API Key / 接口设置</summary>
+    <details class="adv" id="adv">
+      <summary>高级设置（数据源 / API Key）</summary>
       <div class="grid" style="margin-top:10px">
         <div>
-          <label>BSC API Key（Etherscan V2，识别对手方/邀请人需要）</label>
-          <input id="bscKey" placeholder="Etherscan V2 API Key" />
-          <div class="hint">默认接口 <code>https://api.etherscan.io/v2/api?chainid=56</code></div>
+          <label for="source">交易来源 Source</label>
+          <select id="source">
+            <option value="opinx">OPinX / predalpha（免 Key）</option>
+            <option value="predict">Predict.fun 官方 /v1/orders/matches</option>
+            <option value="bsc">BSC 直接扫链（需 BSC Key）</option>
+          </select>
         </div>
         <div>
-          <label>BSC RPC URL（enrich 选 RPC 时使用）</label>
-          <input id="rpcUrl" placeholder="https://bsc-dataseed.bnbchain.org" />
-          <div class="hint">备选：<code>https://bsc.publicnode.com</code> · <code>https://1rpc.io/bnb</code> · <code>https://bsc-dataseed.bnbchain.org</code><br>服务端配了 <code>BSC_RPC_URL</code> 时此框可留空（走 /api/rpc，无跨域、无 Key）</div>
+          <label for="enrich">链上解析 Enrich</label>
+          <select id="enrich">
+            <option value="rpc" selected>BSC RPC（免 Key）</option>
+            <option value="bscapi">BSC API（Etherscan V2）</option>
+            <option value="none">不解析（只看来源数据）</option>
+          </select>
         </div>
-        <div>
-          <label>Predict.fun API Key（来源选官方时需要）</label>
-          <input id="predictKey" placeholder="x-api-key" />
+        <div class="fld" data-need="bscKey">
+          <label for="bscKey">BSC API Key（Etherscan V2）</label>
+          <input id="bscKey" type="password" placeholder="Etherscan V2 API Key" />
+          <div class="hint">仅本次会话使用，不上传第三方 · <span class="lnk" data-toggle="bscKey">显示</span></div>
         </div>
-        <div>
-          <label>OPinX 接口前缀</label>
+        <div class="fld" data-need="rpcUrl">
+          <label for="rpcUrl">BSC RPC URL</label>
+          <input id="rpcUrl" placeholder="留空即用服务端 / 公共 RPC" />
+          <div class="hint">备选：<code>https://bsc.publicnode.com</code> · <code>https://1rpc.io/bnb</code></div>
+        </div>
+        <div class="fld" data-need="predictKey">
+          <label for="predictKey">Predict.fun API Key</label>
+          <input id="predictKey" type="password" placeholder="x-api-key" />
+          <div class="hint">仅本次会话使用 · <span class="lnk" data-toggle="predictKey">显示</span></div>
+        </div>
+        <div class="fld" data-need="opinxBase">
+          <label for="opinxBase">OPinX 接口前缀</label>
           <input id="opinxBase" value="https://tool.opinx.app/api/predict/orders" />
         </div>
       </div>
@@ -202,6 +248,8 @@
       <button id="stop" class="secondary" disabled>停止</button>
       <span id="status" class="pill"></span>
     </div>
+    <div id="progress" class="progress" style="display:none"><div id="progressBar"></div></div>
+    <div id="actionBar" class="actionbar" style="display:none"></div>
   </div>
 
   <!-- ============ 积分查询 ============ -->
@@ -269,8 +317,10 @@
 
   <!-- ============ 日志 ============ -->
   <div class="card">
-    <div class="card-title">运行日志</div>
-    <div id="log"></div>
+    <details class="adv">
+      <summary>技术日志（开发者）</summary>
+      <div id="log" style="margin-top:10px"></div>
+    </details>
   </div>
 
 </div>
@@ -962,8 +1012,9 @@ function parseReceipt(receipt, wallet){
 async function run(){
   aborted = false;
   $("log").innerHTML = "";
+  hideAction();
   const wallet = $("wallet").value.trim();
-  if(!isAddr(wallet)){ alert("请输入合法的钱包地址"); return; }
+  if(!validateWallet()){ $("wallet").focus(); return; }
   const days = Math.max(1, Math.min(90, Number($("days").value)||1));
   const source = $("source").value;
   const enrich = $("enrich").value;
@@ -975,6 +1026,7 @@ async function run(){
   $("go").disabled = true; $("stop").disabled = false;
   const tbody = $("tbody"); tbody.innerHTML = "";
   $("summaryCard").style.display = "none";
+  setProgress(0, 0);
 
   try{
     // 0) 探测服务端代理（Vercel /api，读环境变量）
@@ -993,11 +1045,12 @@ async function run(){
     else if(source==="bsc") items = await listFromBsc(wallet, days, bscKey);
 
     if(items.length===0){
-      tbody.innerHTML = `<tr><td colspan="11" class="empty">该来源未返回交易（可换个来源/增大天数）</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="11" class="empty">该来源未返回交易（换个来源或增大天数试试）</td></tr>`;
       return;
     }
     // 按时间倒序
     items.sort((a,b)=>(b.ts||0)-(a.ts||0));
+    log(`共 ${items.length} 笔，开始${enrich==="none"?"展示":"解析 receipt"}…`);
 
     // 2) 逐笔解析 receipt
     let totUsdtIn=0n, totUsdtOut=0n, totFee=0n;
@@ -1007,7 +1060,8 @@ async function run(){
     for(const it of items){
       if(aborted){ log("已停止","err"); break; }
       done++;
-      setStatus(`解析 ${done}/${items.length} …`);
+      setStatus(enrich==="none" ? `展示 ${done}/${items.length} …` : `解析 ${done}/${items.length} …`);
+      setProgress(done, items.length);
 
       let parsed = null;
       if(enrich!=="none"){
@@ -1052,16 +1106,53 @@ async function run(){
     if(refSet.size){
       log("本钱包相关邀请人: "+[...refSet].join(", "), "ok");
     }
-    setStatus("完成");
-    log("完成 ✅","ok");
+    setStatus(aborted ? `已停止（已保留 ${done} 笔结果）` : "完成 ✓");
+    log(aborted ? "已停止" : "完成 ✅", aborted?"err":"ok");
   }catch(e){
     log("错误: "+e.message, "err");
     setStatus("出错");
+    showActionError(e.message);
     if(tbody.children.length===0)
       tbody.innerHTML = `<tr><td colspan="11" class="empty err">${e.message}</td></tr>`;
   }finally{
     $("go").disabled = false; $("stop").disabled = true;
+    setProgress(0, 0);
   }
+}
+
+/* ---- 进度 / 校验 / 可操作错误 ---- */
+function setProgress(done, total){
+  const bar = $("progress");
+  if(!total){ bar.style.display="none"; $("progressBar").style.width="0"; return; }
+  bar.style.display="block";
+  $("progressBar").style.width = Math.round(done/total*100)+"%";
+}
+function validateWallet(){
+  const el = $("wallet"), err = $("walletErr");
+  const v = el.value.trim();
+  if(!v){ el.classList.remove("valid","invalid"); err.style.display="none"; return false; }
+  if(!isAddr(v)){
+    el.classList.add("invalid"); el.classList.remove("valid");
+    err.textContent = "地址格式不正确，应为 0x 开头的 40 位十六进制地址";
+    err.style.display="block";
+    return false;
+  }
+  el.classList.add("valid"); el.classList.remove("invalid"); err.style.display="none";
+  return true;
+}
+function hideAction(){ $("actionBar").style.display="none"; }
+function showActionError(msg){
+  const bar = $("actionBar");
+  const acts = [];
+  if(/免费档不支持|not supported|upgrade your api|BSC API/i.test(msg)){
+    acts.push(`<button onclick="applyMode('precise');hideAction();run()">切换到 BSC RPC（免 Key）</button>`);
+  }
+  if(/CORS|404|OPinX/i.test(msg)){
+    acts.push(`<button onclick="document.getElementById('source').value='bsc';syncFieldsFromControls();hideAction()">改用 BSC 扫链来源</button>`);
+  }
+  acts.push(`<button onclick="const d=document.getElementById('days');d.value=Math.max(1,Math.floor((+d.value||7)/2));hideAction()">缩短天数</button>`);
+  bar.innerHTML = `<div>${msg}</div><div class="acts">${acts.join("")}</div>`;
+  bar.style.display="block";
 }
 
 /* =====================================================================
@@ -1129,17 +1220,17 @@ function renderRow(it, p, wallet){
 
   const tx = it.tx_hash;
   tr.innerHTML = `
-    <td>${time}</td>
-    <td>${marketTxt}</td>
-    <td>${roleTxt}</td>
-    <td>${dir}</td>
-    <td class="num">${usdtTxt}</td>
-    <td class="num">${sharesTxt}</td>
-    <td class="num">${priceTxt}</td>
-    <td class="num">${feeTxt}</td>
-    <td>${cpHtml}</td>
-    <td>${refHtml}</td>
-    <td><a href="https://bscscan.com/tx/${tx}" target="_blank">${short(tx)}↗</a></td>
+    <td data-label="时间">${time}</td>
+    <td data-label="市场">${marketTxt}</td>
+    <td data-label="角色">${roleTxt}</td>
+    <td data-label="方向">${dir}</td>
+    <td class="num" data-label="USDT">${usdtTxt}</td>
+    <td class="num" data-label="份额">${sharesTxt}</td>
+    <td class="num" data-label="均价">${priceTxt}</td>
+    <td class="num" data-label="净手续费">${feeTxt}</td>
+    <td data-label="对手方">${cpHtml}</td>
+    <td data-label="邀请人">${refHtml}</td>
+    <td data-label="Tx"><a href="https://bscscan.com/tx/${tx}" target="_blank">${short(tx)}↗</a></td>
   `;
   return tr;
 }
@@ -1273,9 +1364,49 @@ $("tbody").addEventListener("click", e=>{
 $("go").addEventListener("click", run);
 $("stop").addEventListener("click", ()=>{ aborted=true; setStatus("停止中…"); });
 $("wallet").addEventListener("keydown", e=>{ if(e.key==="Enter") run(); });
+$("wallet").addEventListener("input", validateWallet);
+
+/* ---- 模式 / 动态字段 / 密码显隐 ---- */
+const MODES = {
+  fast:     { source:"opinx",   enrich:"none" },
+  precise:  { source:"opinx",   enrich:"rpc"  },
+  advanced: { source:"bsc",     enrich:"rpc"  },
+};
+function applyMode(m){
+  const cfg = MODES[m]; if(!cfg) return;
+  $("source").value = cfg.source; $("enrich").value = cfg.enrich;
+  document.querySelectorAll(".mode").forEach(b=>b.classList.toggle("active", b.dataset.mode===m));
+  syncFieldsFromControls();
+}
+// 根据 source/enrich + 服务端配置，决定显示哪些字段
+function syncFieldsFromControls(){
+  const source = $("source").value, enrich = $("enrich").value;
+  const need = {
+    bscKey: (source==="bsc" || enrich==="bscapi") && !(SERVER.enabled && SERVER.bsc),
+    rpcUrl: enrich==="rpc" && !(SERVER.enabled && SERVER.rpc),
+    predictKey: source==="predict" && !(SERVER.enabled && SERVER.predict),
+    opinxBase: source==="opinx",
+  };
+  document.querySelectorAll(".fld[data-need]").forEach(el=>{
+    el.style.display = need[el.getAttribute("data-need")] ? "" : "none";
+  });
+  // 选择与某个内置模式不一致时，取消模式高亮（视为自定义）
+  const match = Object.entries(MODES).find(([,c])=>c.source===source && c.enrich===enrich);
+  document.querySelectorAll(".mode").forEach(b=>b.classList.toggle("active", !!match && b.dataset.mode===match[0]));
+}
+document.querySelectorAll(".mode").forEach(b=> b.addEventListener("click", ()=>applyMode(b.dataset.mode)));
+$("source").addEventListener("change", syncFieldsFromControls);
+$("enrich").addEventListener("change", syncFieldsFromControls);
+// 显示/隐藏密码
+document.querySelectorAll(".lnk[data-toggle]").forEach(s=> s.addEventListener("click", ()=>{
+  const inp = $(s.getAttribute("data-toggle"));
+  const show = inp.type==="password"; inp.type = show?"text":"password"; s.textContent = show?"隐藏":"显示";
+}));
+$("status").setAttribute("aria-live","polite");
 
 // 预填示例钱包，方便测试
 $("wallet").value = "0xab929df893b7e6202539aae41c86afc7ab575821";
+validateWallet();
 
 // 页面加载时探测服务端代理，更新 key 输入框提示
 (async ()=>{
@@ -1292,8 +1423,9 @@ $("wallet").value = "0xab929df893b7e6202539aae41c86afc7ab575821";
     if(SERVER.rpc) $("rpcUrl").placeholder = "服务端已配置，可留空";
   } else {
     banner.className = "banner info";
-    banner.innerHTML = "ℹ️ 未检测到 /api 服务端代理：当前为本地 / 纯静态模式，请在下方手填 API Key。";
+    banner.innerHTML = "ℹ️ 未检测到 /api 服务端代理：当前为本地 / 纯静态模式，请在「高级设置」手填 API Key。";
   }
+  applyMode("fast");      // 默认快速查询，并据服务端配置刷新字段显隐
 })();
 </script>
 </body>
