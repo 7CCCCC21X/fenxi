@@ -1494,20 +1494,24 @@ async function doFindReferrer(){
         : `<div class="hint">未找到邀请人（最近 ${days} 天无邀请返佣，或邀请更早，请加大天数）。</div>`;
       fillRefNames(box); return;
     }
-    // 批量
-    const rows = [];
-    for(let i=0;i<addrs.length;i++){
-      if(aborted) break;
-      showProgress(box, `批量查邀请人 ${i+1}/${addrs.length}`, i, addrs.length);
-      let r=null; try{ r = await findReferrer(addrs[i], days); }catch(e){ r = {error:e.message}; }
-      rows.push([addrs[i], r]);
-    }
-    box.innerHTML =
-      `<div style="margin-bottom:8px">批量查邀请人（${rows.length}/${addrs.length} 个地址）：</div>`
-      + `<div class="scroll" style="max-height:46vh"><table><thead><tr><th>#</th><th>钱包</th><th>邀请人</th></tr></thead><tbody>`
-      + rows.map(([a,r],i)=>`<tr><td>${i+1}</td><td>${personHtml(a)}</td><td>${r&&r.referrer?personHtml(r.referrer):(r&&r.error?`<span class="err">${r.error}</span>`:"—")}</td></tr>`).join("")
+    // 批量：并行查询，结果到一个填一个
+    const head = `<div id="refBatchHead" style="margin-bottom:8px"></div>`
+      + `<div class="scroll" style="max-height:52vh"><table><thead><tr><th>#</th><th>钱包</th><th>邀请人</th></tr></thead><tbody>`
+      + addrs.map((a,i)=>`<tr><td>${i+1}</td><td>${personHtml(a)}</td><td class="refcell" data-i="${i}"><span class="pill busy">查询中…</span></td></tr>`).join("")
       + `</tbody></table></div>`;
+    box.innerHTML = head;
     fillRefNames(box);
+    let done = 0;
+    const setHead = ()=>{ const h=$("refBatchHead"); if(h) h.innerHTML = `批量查邀请人 <b>${done}/${addrs.length}</b> 完成`; };
+    setHead();
+    await pMap(addrs, async (a,i)=>{
+      if(aborted) return;
+      let r=null; try{ r = await findReferrer(a, days); }catch(e){ r = {error:e.message}; }
+      done++;
+      const cell = box.querySelector(`.refcell[data-i="${i}"]`);
+      if(cell) cell.innerHTML = r&&r.referrer ? personHtml(r.referrer) : (r&&r.error ? `<span class="err">${r.error}</span>` : "未找到");
+      setHead(); fillRefNames(box);
+    }, 6);   // 并行 6 路
   }catch(e){ box.innerHTML = `<span class="err">${e.message}</span>`; }
 }
 async function doFindInvitees(){
@@ -1532,18 +1536,23 @@ async function doFindInvitees(){
       box.innerHTML = renderOne(addrs[0], invitees, scanned, total, capped, earlyStopped);
       fillRefNames(box); return;
     }
-    // 批量
-    let html = "";
-    for(let i=0;i<addrs.length;i++){
-      if(aborted) break;
-      box.innerHTML = html + `<div class="pill busy" style="margin:6px 0">批量查下线 ${i+1}/${addrs.length}（${short(addrs[i])}）…</div>`
-        + `<div class="progress" style="display:block"><div style="width:${Math.round(i/addrs.length*100)}%"></div></div>`;
+    // 批量：并行查询（下线扫描较重，并发 3），结果到一个填一个
+    const slots = `<div id="invBatchHead" style="margin-bottom:8px"></div>`
+      + addrs.map((a,i)=>`<div class="invslot" data-i="${i}"><span class="pill busy">${short(a)} 排队中…</span></div>`).join("");
+    box.innerHTML = slots;
+    let done = 0;
+    const setHead = ()=>{ const h=$("invBatchHead"); if(h) h.innerHTML = `批量查下线 <b>${done}/${addrs.length}</b> 完成`; };
+    setHead();
+    await pMap(addrs, async (a,i)=>{
+      if(aborted) return;
+      const slot = box.querySelector(`.invslot[data-i="${i}"]`);
       try{
-        const { invitees, scanned, total, capped, earlyStopped } = await findInvitees(addrs[i], days);
-        html += renderOne(addrs[i], invitees, scanned, total, capped, earlyStopped);
-      }catch(e){ html += `<div class="err" style="margin:6px 0">${short(addrs[i])}: ${e.message}</div>`; }
-      box.innerHTML = html; fillRefNames(box);
-    }
+        const { invitees, scanned, total, capped, earlyStopped } = await findInvitees(a, days,
+          (label,d,t,n)=>{ if(slot) slot.innerHTML = `<span class="pill busy">${short(a)} · ${label} ${t?Math.round(d/t*100):0}%${n!=null?` · ${n} 下线`:""}</span>`; });
+        if(slot) slot.innerHTML = renderOne(a, invitees, scanned, total, capped, earlyStopped);
+      }catch(e){ if(slot) slot.innerHTML = `<div class="err" style="margin:6px 0">${short(a)}: ${e.message}</div>`; }
+      done++; setHead(); fillRefNames(box);
+    }, 3);
   }catch(e){ box.innerHTML = `<span class="err">${e.message}</span>`; }
 }
 
