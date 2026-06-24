@@ -939,7 +939,22 @@ function inviteeFromReceipt(receipt){
   return null;
 }
 
-// 查某钱包的邀请人：扫各手续费合约的 FeeRefunded(to=wallet)，取同 tx 的 referrer
+// 并发池：同时跑 conc 个任务（受 aborted 控制）
+async function pMap(items, fn, conc){
+  const out = new Array(items.length); let i = 0;
+  const workers = Array.from({length: Math.min(conc, items.length||0)}, async ()=>{
+    while(i < items.length){
+      if(aborted) return;
+      const idx = i++;
+      try{ out[idx] = await fn(items[idx], idx); }catch(_){ out[idx] = undefined; }
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+const RECEIPT_CONC = 6; // 并发拉 receipt 的路数
+
+// 查某钱包的邀请人：扫各手续费合约的 FeeRefunded(to=wallet)，并发取同 tx 的 referrer
 async function findReferrer(address, days, onProgress){
   const tip = await blockTip();
   const fromBlock = await blockFromTime(Math.floor(Date.now()/1000) - days*86400);
@@ -947,26 +962,22 @@ async function findReferrer(address, days, onProgress){
   let logs = [];
   for(const mod of FEE_MODULES){
     if(aborted) break;
-    const part = await scanLogsRange(topics, fromBlock, tip,
-      (d,t)=>onProgress && onProgress(d, t), mod);
-    logs.push(...part);
+    logs.push(...await scanLogsRange(topics, fromBlock, tip, (d,t)=>onProgress && onProgress(d,t), mod));
   }
-  logs.sort((a,b)=> Number(bg(b.blockNumber)) - Number(bg(a.blockNumber))); // 最新优先
-  // 邀请人对一个用户固定，只查最近若干笔付费交易即可（避免无邀请人时拉光全部 receipt）
-  let checked=0; const cap=12;
-  for(const lg of logs){
-    if(aborted || checked>=cap) break;
-    if(word(lg.data,2)<=0n) continue;              // feeCharged>0 才有邀请返佣
-    checked++;
+  // 邀请人对一个用户固定：只看最近若干笔付费交易，并发解析
+  const cands = logs.filter(lg=>word(lg.data,2)>0n)
+    .sort((a,b)=> Number(bg(b.blockNumber)) - Number(bg(a.blockNumber))).slice(0,12);
+  let done=0;
+  const res = await pMap(cands, async lg=>{
     const ref = referrerFromReceipt(await getReceiptAny(lg.transactionHash));
-    if(ref) return { referrer: ref, tx: lg.transactionHash };
-    onProgress && onProgress(checked, cap);
-    await sleep(_bscApiUsable===false ? 80 : 200);
-  }
+    onProgress && onProgress(++done, cands.length);
+    return ref ? { referrer:ref, tx:lg.transactionHash } : null;
+  }, RECEIPT_CONC);
+  for(const x of res){ if(x) return x; } // cands 已按时间降序，取最近命中
   return null;
 }
 
-// 反查某邀请人邀请的用户：扫各手续费合约的 ReferralFeeDistributed(referrer=address)，取每 tx 的 invitee
+// 反查某邀请人邀请的用户：扫各手续费合约的 ReferralFeeDistributed(referrer=address)，并发解析每 tx 的 invitee
 async function findInvitees(address, days, onProgress){
   const tip = await blockTip();
   const fromBlock = await blockFromTime(Math.floor(Date.now()/1000) - days*86400);
@@ -974,19 +985,16 @@ async function findInvitees(address, days, onProgress){
   let logs = [];
   for(const mod of FEE_MODULES){
     if(aborted) break;
-    const part = await scanLogsRange(topics, fromBlock, tip,
-      (d,t)=>onProgress && onProgress("扫描日志", d, t, logs.length), mod);
-    logs.push(...part);
+    logs.push(...await scanLogsRange(topics, fromBlock, tip, (d,t)=>onProgress && onProgress("扫描日志", d, t, logs.length), mod));
   }
   const txs = [...new Set(logs.map(l=>l.transactionHash.toLowerCase()))];
-  const invitees = new Map(); let done=0; const cap=400;
-  for(const tx of txs){
-    if(aborted || done>=cap) break;
+  const cap=400; const slice = txs.slice(0, cap);
+  const invitees = new Map(); let done=0;
+  await pMap(slice, async tx=>{
     const u = inviteeFromReceipt(await getReceiptAny(tx));
-    if(u){ const cur = invitees.get(u)||{count:0}; cur.count++; invitees.set(u, cur); }
-    done++; onProgress && onProgress("解析返佣", done, txs.length, invitees.size);
-    await sleep(_bscApiUsable===false ? 80 : 210);
-  }
+    if(u){ const cur = invitees.get(u)||{count:0}; cur.count++; invitees.set(u, cur); } // get/set 同步、无竞态
+    done++; onProgress && onProgress("解析返佣", done, slice.length, invitees.size);
+  }, RECEIPT_CONC);
   return { invitees, scanned:done, total:txs.length, capped: txs.length>cap };
 }
 
