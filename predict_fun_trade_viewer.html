@@ -107,6 +107,9 @@
   tbody tr:nth-child(even) td{background:rgba(255,255,255,.012)}
   tbody tr:hover td{background:rgba(77,141,255,.07)}
   td.num{font-family:var(--mono);text-align:right;color:var(--num);font-size:12.5px}
+  /* 市场列限宽，避免个别超长标题把整列撑出大片空白 */
+  th[data-col="市场"],td[data-label="市场"]{max-width:240px}
+  td[data-label="市场"] a,td[data-label="市场"] .mkt{display:inline-block;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
 
   .tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.3px}
   .tag.buy{background:rgba(70,208,127,.16);color:var(--green);border:1px solid rgba(70,208,127,.35)}
@@ -1461,7 +1464,8 @@ function renderRow(it, p, wallet){
   const srcUrl = marketUrl(it.slug, it.marketId);
   let marketCell;
   if(it.market){
-    marketCell = srcUrl ? `<a href="${srcUrl}" target="_blank">${it.market} ↗</a>` : `${it.market}`;
+    const ttl = String(it.market).replace(/"/g,"&quot;");
+    marketCell = srcUrl ? `<a href="${srcUrl}" target="_blank" title="${ttl}">${it.market} ↗</a>` : `<span title="${ttl}">${it.market}</span>`;
   }else{
     marketCell = `<span class="mkt" data-cid="${cid}">解析中…</span>`;
   }
