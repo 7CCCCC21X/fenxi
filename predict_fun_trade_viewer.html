@@ -1033,9 +1033,53 @@ async function pMap(items, fn, conc){
 }
 const RECEIPT_CONC = 10; // 并发拉 receipt 的路数（RPC）
 
-// 查某地址的邀请人：从最新往回扫它作为 taker 付费的 FeeRefunded(to=addr,feeCharged>0)，
-// 凑到几条候选就停（邀请人固定，最近一笔即可），并发取同 tx 的 referrer。
+// 取某地址的原始成交（OPinX history，分页），用于快速找邀请人
+async function fetchOpinxTrades(address, days, maxPages){
+  const end_time = Math.floor(Date.now()/1000);
+  const start_time = end_time - days*86400;
+  const tradesBase = "https://tool.opinx.app/api/predict/trades";
+  const all = []; const limit=50; let offset=0, pages=0; maxPages = maxPages||4;
+  while(pages<maxPages){
+    if(aborted) break;
+    const qs = `limit=${limit}&offset=${offset}&sort=time&start_time=${start_time}&end_time=${end_time}`;
+    const url = SERVER.enabled ? `/api/opinx?wallet=${address}&${qs}` : `${tradesBase}/${address}/history?${qs}`;
+    const { ok, json } = await fetchJSON(url);
+    if(!ok || !json) break;
+    const trades = json.trades || json.data || [];
+    all.push(...trades);
+    pages++; offset += limit;
+    if(trades.length < limit) break;
+  }
+  return all;
+}
+
+// 查某地址的邀请人：先直接查它的交易记录，找它作为 taker（付费方）的一笔，从 receipt 读 referrer 即停；
+// OPinX 不可用时回退到链上 getLogs 扫描。
 async function findReferrer(address, days, onProgress){
+  const w = address.toLowerCase();
+  // —— 快路：OPinX 交易记录 ——
+  try{
+    const trades = await fetchOpinxTrades(address, Math.max(days, 30));
+    if(trades.length){
+      // 该地址作为 taker 的成交（taker 付费才会触发 ReferralFeeDistributed），按时间倒序
+      const takerTx = [...new Set(trades
+        .filter(t => String(t.taker||"").toLowerCase()===w)
+        .sort((a,b)=> (b.block_timestamp||0)-(a.block_timestamp||0))
+        .map(t => t.tx_hash))].slice(0, 8);
+      if(takerTx.length){
+        let done=0;
+        const res = await pMap(takerTx, async tx=>{
+          const ref = referrerFromReceipt(await getReceiptAny(tx));
+          onProgress && onProgress(++done, takerTx.length);
+          return ref ? { referrer:ref, tx } : null;
+        }, Math.min(RECEIPT_CONC, 8));
+        for(const x of res){ if(x) return x; }  // 找到即停
+      }
+    }
+  }catch(_){ /* 失败则走链上回退 */ }
+
+  // —— 回退：链上 getLogs 扫描 FeeRefunded(to=addr) ——
+  if(aborted) return null;
   const tip = await blockTip();
   const fromBlock = await blockFromTime(Math.floor(Date.now()/1000) - days*86400);
   const topics = [T.FEE_REFUNDED, null, padTopic(address)];
