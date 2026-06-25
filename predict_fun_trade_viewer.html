@@ -109,7 +109,7 @@
   td.num{font-family:var(--mono);text-align:right;color:var(--num);font-size:12.5px}
   /* 市场列限宽，避免个别超长标题把整列撑出大片空白 */
   th[data-col="市场"],td[data-label="市场"]{max-width:240px}
-  td[data-label="市场"] a,td[data-label="市场"] .mkt{display:inline-block;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
+  td[data-label="市场"] a,td[data-label="市场"] .mkt,td[data-label="市场"] .mkt-t{display:inline-block;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
 
   .tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.3px}
   .tag.buy{background:rgba(70,208,127,.16);color:var(--green);border:1px solid rgba(70,208,127,.35)}
@@ -292,6 +292,15 @@
           <label for="opinxBase">OPinX 接口前缀</label>
           <input id="opinxBase" value="https://tool.opinx.app/api/predict/trades" />
         </div>
+        <div>
+          <label for="transUrl">标题翻译接口（可选，含 {q} {tl} 占位）</label>
+          <input id="transUrl" placeholder="留空 → 服务端 /api/translate 或 Google" />
+          <div class="hint">默认走 /api/translate（服务端）或 Google gtx；可填自定义翻译接口</div>
+        </div>
+        <div>
+          <label for="transDict">自定义译名词典（每行：英文=中文，优先于接口）</label>
+          <textarea id="transDict" rows="2" placeholder="Seattle Mariners=西雅图水手&#10;$100M=1亿美元"></textarea>
+        </div>
         <div class="fld" data-need="rpcUrl">
           <label for="logWindow">getLogs 窗口（区块数）</label>
           <input id="logWindow" type="number" value="49000" min="1000" max="5000000" />
@@ -335,6 +344,7 @@
         <select id="filterRole"><option value="">全部角色</option><option value="maker">maker</option><option value="taker">taker</option></select>
         <label class="chk"><input type="checkbox" id="filterRef" /> 有邀请人</label>
         <label class="chk" title="按对手方聚合：每个对手方一行，显示笔数与合计"><input type="checkbox" id="dedupCp" /> 对手方去重</label>
+        <label class="chk" title="把市场标题翻译成中文（可在高级设置自定义接口/词典）"><input type="checkbox" id="transTitles" /> 译中文</label>
         <input type="date" id="filterFrom" title="起始日期" />
         <span class="chk">–</span>
         <input type="date" id="filterTo" title="结束日期" />
@@ -1311,6 +1321,7 @@ async function run(){
       $("toolbar").style.display = "flex"; populateMarketFilter(); applyTableView(); autoHideEmptyColumns(enrich);
       // 后台自动解析对手方邀请人：先 GraphQL（对 maker 也有效），精准模式再允许链上回退
       autoResolveCpReferrers(myRun, enrich!=="none");
+      if($("transTitles").checked) applyTitleTranslation(true);
     }
 
     // 3) 汇总卡片
@@ -1465,7 +1476,8 @@ function renderRow(it, p, wallet){
   let marketCell;
   if(it.market){
     const ttl = String(it.market).replace(/"/g,"&quot;");
-    marketCell = srcUrl ? `<a href="${srcUrl}" target="_blank" title="${ttl}">${it.market} ↗</a>` : `<span title="${ttl}">${it.market}</span>`;
+    const inner = `<span class="mkt-t" data-en="${ttl}">${it.market}</span>`;
+    marketCell = srcUrl ? `<a href="${srcUrl}" target="_blank" title="${ttl}">${inner} ↗</a>` : `<span title="${ttl}">${inner}</span>`;
   }else{
     marketCell = `<span class="mkt" data-cid="${cid}">解析中…</span>`;
   }
@@ -1751,6 +1763,48 @@ function applyTableView(){
   $("rowCount").textContent = shown===RESULTS.length ? `${RESULTS.length} 笔` : `${shown}/${RESULTS.length} 笔`;
   updateSortArrows();
 }
+/* ---- 标题翻译中文（可自定义接口 + 词典） ---- */
+let _trCache = new Map();
+try{ const s=localStorage.getItem("pf.trcache"); if(s) _trCache=new Map(Object.entries(JSON.parse(s))); }catch(_){}
+function saveTrCache(){ try{ localStorage.setItem("pf.trcache", JSON.stringify(Object.fromEntries([..._trCache].slice(-2000)))); }catch(_){} }
+function dictMap(){
+  const m=new Map(); const t=(document.getElementById("transDict")&&document.getElementById("transDict").value)||"";
+  t.split(/\n+/).forEach(line=>{ const i=line.indexOf("="); if(i>0){ const k=line.slice(0,i).trim(), v=line.slice(i+1).trim(); if(k&&v) m.set(k.toLowerCase(), v); } });
+  return m;
+}
+async function translateTitle(q, dm){
+  if(!q) return q;
+  const dk = q.toLowerCase();
+  if(dm && dm.has(dk)) return dm.get(dk);
+  if(_trCache.has(q)) return _trCache.get(q);
+  const tl="zh-CN";
+  const custom = (document.getElementById("transUrl")&&document.getElementById("transUrl").value||"").trim();
+  let url;
+  if(custom) url = custom.replace("{q}",encodeURIComponent(q)).replace("{tl}",tl);
+  else if(SERVER.enabled) url = `/api/translate?q=${encodeURIComponent(q)}&tl=${tl}`;
+  else url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${tl}&dt=t&q=${encodeURIComponent(q)}`;
+  try{
+    const { json } = await fetchJSON(url, { timeout: 12000 });
+    let zh = null;
+    if(Array.isArray(json) && Array.isArray(json[0])) zh = json[0].map(seg=>Array.isArray(seg)?(seg[0]||""):"").join("");
+    else if(json && (json.translatedText||json.text||json.result)) zh = json.translatedText||json.text||json.result;
+    if(zh){ _trCache.set(q, zh); saveTrCache(); return zh; }
+  }catch(_){}
+  return q;
+}
+async function applyTitleTranslation(on){
+  const els = [...document.querySelectorAll("#resultTable .mkt-t[data-en]")];
+  if(!on){ els.forEach(el=>el.textContent=el.getAttribute("data-en")); return; }
+  const dm = dictMap();
+  const uniq = [...new Set(els.map(el=>el.getAttribute("data-en")))];
+  const map = new Map();
+  await pMap(uniq, async q=>{ map.set(q, await translateTitle(q, dm)); }, 5);
+  document.querySelectorAll("#resultTable .mkt-t[data-en]").forEach(el=>{
+    const en = el.getAttribute("data-en"), zh = map.get(en);
+    if(zh && zh!==en) el.textContent = zh;
+  });
+}
+
 // 对手方去重：把可见交易按对手方聚合成一行
 let DEDUP = false;
 function renderDedupRows(visible){
@@ -1772,7 +1826,7 @@ function renderDedupRows(visible){
     tr.innerHTML =
       `<td class="selcol"><input type="checkbox" class="rowsel" /></td>`
       + `<td data-label="时间">${m.ts?new Date(m.ts*1000).toLocaleDateString():"—"}</td>`
-      + `<td data-label="市场">${m.market||"—"}</td>`
+      + `<td data-label="市场">${m.market?`<span class="mkt-t" data-en="${String(m.market).replace(/"/g,"&quot;")}">${m.market}</span>`:"—"}</td>`
       + `<td data-label="角色">—</td><td data-label="方向">—</td>`
       + `<td class="num" data-label="USDT">${m.usdt.toLocaleString(undefined,{maximumFractionDigits:2})}</td>`
       + `<td class="num" data-label="份额">${m.shares.toLocaleString(undefined,{maximumFractionDigits:2})}</td>`
@@ -1786,6 +1840,7 @@ function renderDedupRows(visible){
   }
   $("rowCount").textContent = `${rows.length} 个对手方（去重自 ${visible.length} 笔）`;
   autoResolveCpReferrers(RUN_ID, LAST_ENRICH!=="none"); // 解析/填充对手方邀请人（含未缓存的，会显示未找到）
+  if($("transTitles") && $("transTitles").checked) applyTitleTranslation(true);
 }
 function updateSortArrows(){
   document.querySelectorAll("th[data-sort]").forEach(th=>{
@@ -1810,7 +1865,11 @@ $("dedupCp").addEventListener("change", ()=>{
   else { ["角色","方向","均价","市场"].forEach(c=>setColVisible(c,true)); }
   applyTableView();
   if(!DEDUP) autoHideEmptyColumns(LAST_ENRICH);
+  if($("transTitles").checked) applyTitleTranslation(true);
 });
+// 译中文开关 + 自定义设置持久化
+$("transTitles").addEventListener("change", ()=>{ LS.set("trans", $("transTitles").checked?"1":"0"); applyTitleTranslation($("transTitles").checked); });
+["transUrl","transDict"].forEach(id=> $(id).addEventListener("change", ()=>{ LS.set(id, $(id).value); if($("transTitles").checked) applyTitleTranslation(true); }));
 document.querySelectorAll("th[data-sort]").forEach(th=> th.addEventListener("click", ()=>setSort(th.getAttribute("data-sort"))));
 function exportCsv(){
   const head = ["时间","市场","角色","方向","USDT","份额","均价","净手续费","对手方","邀请人","Tx"];
@@ -1958,6 +2017,9 @@ applyTheme(LS.get("theme", "dark"));
 $("wallet").addEventListener("change", ()=>{ const v=$("wallet").value.trim(); if(isAddr(v)) LS.set("wallet", v); });
 $("days").value = LS.get("days", "1");
 $("refDays").value = LS.get("refDays", "30");
+$("transTitles").checked = LS.get("trans","0")==="1";
+$("transUrl").value = LS.get("transUrl","");
+$("transDict").value = LS.get("transDict","");
 $("wallet").value = LS.get("wallet", "0xab929df893b7e6202539aae41c86afc7ab575821");
 validateWallet();
 
