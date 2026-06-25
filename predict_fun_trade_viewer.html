@@ -1801,7 +1801,7 @@ async function applyTitleTranslation(on){
   await pMap(uniq, async q=>{ map.set(q, await translateTitle(q, dm)); }, 5);
   document.querySelectorAll("#resultTable .mkt-t[data-en]").forEach(el=>{
     const en = el.getAttribute("data-en"), zh = map.get(en);
-    if(zh && zh!==en) el.textContent = zh;
+    el.textContent = (zh && zh!==en) ? `${zh}(${en})` : en;  // 双语：中文(English)
   });
 }
 
