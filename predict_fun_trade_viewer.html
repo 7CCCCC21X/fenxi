@@ -355,6 +355,7 @@
           <option value="price">均价 ↓</option>
         </select>
         <button class="secondary" id="cpRefBtn" title="解析每个对手方各自的邀请人（链上扫描，稍慢）">对手方邀请人</button>
+        <button class="secondary" id="analyzeBtn" title="按邀请人分组统计对手方（去重），跟随筛选">数据分析</button>
         <button class="secondary" id="copyCp" title="复制勾选行的对手方地址（未勾选则复制当前筛选的全部）">复制对手方</button>
         <button class="secondary" id="exportCsv">导出 CSV</button>
       </div>
@@ -382,6 +383,15 @@
         </tbody>
       </table>
     </div>
+  </div>
+
+  <!-- ============ 数据分析 ============ -->
+  <div class="card" id="analysisCard" style="display:none">
+    <div class="row" style="justify-content:space-between;margin-bottom:12px">
+      <div class="card-title" style="margin:0">数据分析 · 按邀请人去重</div>
+      <button class="secondary" id="analysisRefresh">刷新</button>
+    </div>
+    <div id="analysisBody"></div>
   </div>
 
   <!-- ============ 日志 ============ -->
@@ -1753,7 +1763,7 @@ function applyTableView(){
     tr.style.display = ok ? "" : "none";
     if(ok){ shown++; visible.push(tr); }
   }
-  if(DEDUP){ renderDedupRows(visible); updateSortArrows(); return; }
+  if(DEDUP){ renderDedupRows(visible); updateSortArrows(); refreshAnalysis(); return; }
   visible.sort((a,b)=>{
     const va = (a._rec||{})[SORT.key], vb = (b._rec||{})[SORT.key];
     const na = va==null?-Infinity:va, nb = vb==null?-Infinity:vb;
@@ -1762,7 +1772,9 @@ function applyTableView(){
   visible.forEach(tr=>tbody.appendChild(tr));
   $("rowCount").textContent = shown===RESULTS.length ? `${RESULTS.length} 笔` : `${shown}/${RESULTS.length} 笔`;
   updateSortArrows();
+  refreshAnalysis();
 }
+function refreshAnalysis(){ if($("analysisCard") && $("analysisCard").style.display!=="none") runAnalysis(); }
 /* ---- 标题翻译中文（可自定义接口 + 词典） ---- */
 let _trCache = new Map();
 try{ const s=localStorage.getItem("pf.trcache"); if(s) _trCache=new Map(Object.entries(JSON.parse(s))); }catch(_){}
@@ -1803,6 +1815,41 @@ async function applyTitleTranslation(on){
     const en = el.getAttribute("data-en"), zh = map.get(en);
     el.textContent = (zh && zh!==en) ? `${zh}(${en})` : en;  // 双语：中文(English)
   });
+}
+
+/* ---- 数据分析：按邀请人对（可见的）对手方去重分组 ---- */
+function miniPerson(addr){
+  return `<span class="person" data-addr="${addr}"><a class="addr" href="${portfolioUrl(addr)}" target="_blank">${short(addr)}</a><span class="uname ref-uname" data-addr="${addr}"></span></span>`;
+}
+function runAnalysis(){
+  const card = $("analysisCard"); card.style.display = "";
+  const visible = RESULTS.filter(tr=>tr.style.display!=="none");
+  const cpSet = new Set();
+  visible.forEach(tr=> (tr._rec&&tr._rec.counterparties||[]).forEach(a=>{ if(/^0x[a-fA-F0-9]{40}$/.test(a)) cpSet.add(a.toLowerCase()); }));
+  const byRef = new Map(); let unresolved=0, noneSet=new Set();
+  for(const cp of cpSet){
+    if(!_cpRefCache.has(cp)){ unresolved++; continue; }
+    const ref = _cpRefCache.get(cp);
+    if(!ref){ noneSet.add(cp); continue; }
+    if(!byRef.has(ref)) byRef.set(ref, new Set());
+    byRef.get(ref).add(cp);
+  }
+  const rows = [...byRef.entries()].sort((a,b)=> b[1].size-a[1].size);
+  let html = `<div class="stats" style="margin-bottom:12px">`
+    + `<div class="stat"><b>${cpSet.size}</b><span>对手方(去重)</span></div>`
+    + `<div class="stat"><b>${rows.length}</b><span>邀请人</span></div>`
+    + `<div class="stat"><b>${noneSet.size}</b><span>无邀请人</span></div>`
+    + (unresolved?`<div class="stat"><b>${unresolved}</b><span>待解析</span></div>`:``)
+    + `</div>`;
+  if(rows.length){
+    html += `<div class="scroll" style="max-height:52vh"><table><thead><tr><th>#</th><th>邀请人</th><th>去重对手方数</th><th>对手方地址</th></tr></thead><tbody>`
+      + rows.map(([ref,set],i)=>`<tr><td>${i+1}</td><td>${miniPerson(ref)}</td><td class="num"><b>${set.size}</b></td><td style="white-space:normal">${[...set].map(miniPerson).join("　")}</td></tr>`).join("")
+      + `</tbody></table></div>`;
+  } else {
+    html += `<div class="hint">暂无可归组数据${unresolved?`（还有 ${unresolved} 个对手方邀请人待解析，稍候点「刷新」）`:"（先点「对手方邀请人」解析，或等待自动解析完成）"}。</div>`;
+  }
+  $("analysisBody").innerHTML = html;
+  fillRefNames($("analysisBody"));
 }
 
 // 对手方去重：把可见交易按对手方聚合成一行
@@ -1914,6 +1961,8 @@ async function resolveCpReferrers(){
   finally{ btn.disabled = false; btn.textContent = orig; }
 }
 $("cpRefBtn").addEventListener("click", resolveCpReferrers);
+$("analyzeBtn").addEventListener("click", runAnalysis);
+$("analysisRefresh").addEventListener("click", runAnalysis);
 
 // 优先用 GraphQL 直接查“谁邀请了该地址”（瞬间、对纯 maker 也有效）；schema 不支持就标记后不再试
 let _referredBySupported = null; // null 未知, false 不支持
@@ -1964,6 +2013,7 @@ async function autoResolveCpReferrers(runId, allowChain){
     fill(addr, _cpRefCache.get(addr));   // 查到即显示
     fillRefNames($("tbody"));
   }, 3);
+  if(runId===RUN_ID) refreshAnalysis(); // 解析完刷新数据分析
 }
 
 /* ---- 模式 / 动态字段 / 密码显隐 ---- */
