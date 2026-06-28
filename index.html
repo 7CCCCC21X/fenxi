@@ -428,8 +428,17 @@
         <button id="refUp" class="secondary">查邀请人 ↑</button>
         <button id="refDown">查下线 ↓</button>
       </div>
-      <div class="hint" style="margin-top:6px">「查邀请人」= 谁邀请了这些钱包；「查下线」= 这些地址各自邀请了哪些用户。<b>支持批量</b>（多地址逐个处理）。链上解析：有 BSC API Key 走 API（快），否则自动 <b>RPC 扫描</b>（免费，较慢）。</div>
+      <div class="hint" style="margin-top:6px">「查邀请人」= 谁邀请了这些钱包；「查下线」= 这些地址各自邀请了哪些用户。<b>支持批量</b>（多地址逐个处理）。链上解析：有 BSC API Key 走 API（快），否则自动 <b>RPC 扫描</b>（免费，较慢）。查过的邀请人会<b>缓存</b>，再查直接命中、不重复请求。</div>
       <div id="refResult" style="margin-top:12px"></div>
+      <div id="refHistWrap" style="margin-top:16px;display:none">
+        <div class="row" style="align-items:center;gap:8px;margin-bottom:8px">
+          <div class="card-title" style="margin:0">查询历史 · 缓存 <span id="refHistCount" class="pill"></span></div>
+          <button id="refHistFill" class="secondary" type="button" title="把历史里的地址全部填入上面的输入框" style="margin-left:auto">填回输入框</button>
+          <button id="refHistClear" class="secondary" type="button" title="清空本地缓存的查询历史">清空</button>
+        </div>
+        <div class="hint" id="refHistHint" style="margin-bottom:8px">命中的邀请人永久缓存；「未找到」按当时回溯天数缓存，加大天数会重查。</div>
+        <div class="scroll" id="refHistBody" style="max-height:40vh"></div>
+      </div>
     </div>
   </div>
 
@@ -743,21 +752,16 @@ async function getReceiptViaApi(txhash, key){
 }
 // RPC 目标：服务端有 BSC_RPC_URL 时走 /api/rpc，否则直连用户填的 RPC
 function rpcTarget(rpc){ return (SERVER.enabled && SERVER.rpc) ? "/api/rpc" : rpc; }
-// 通过 RPC 拿 receipt
+// 通过 RPC 拿 receipt（统一走 rpcFetch：带限流 + 429 退避重试）
 async function getReceiptViaRpc(txhash, rpc){
-  const { json } = await fetchJSON(rpcTarget(rpc), {
-    method:"POST", headers:{"content-type":"application/json"},
-    body: JSON.stringify({jsonrpc:"2.0",id:1,method:"eth_getTransactionReceipt",params:[txhash]})
-  });
-  if(!json) throw new Error("RPC 无响应");
+  const json = await rpcFetch({ method:"eth_getTransactionReceipt", params:[txhash] }, rpc);
   if(json.error) throw new Error(json.error.message);
   return json.result;
 }
 // 通过 RPC 拿区块时间戳
 async function getBlockTime(blockHex, mode, key, rpc){
   if(mode==="rpc"){
-    const { json } = await fetchJSON(rpcTarget(rpc), {method:"POST",headers:{"content-type":"application/json"},
-      body:JSON.stringify({jsonrpc:"2.0",id:1,method:"eth_getBlockByNumber",params:[blockHex,false]})});
+    const json = await rpcFetch({ method:"eth_getBlockByNumber", params:[blockHex,false] }, rpc);
     return json && json.result ? Number(bg(json.result.timestamp)) : null;
   } else {
     const url = esUrl({ module:"proxy", action:"eth_getBlockByNumber", tag:blockHex, boolean:false }, key);
@@ -915,13 +919,47 @@ function maxLogWindow(){ const el=document.getElementById("logWindow"); return M
 // RPC 兜底始终可用（默认公共节点）；BSC API 仅作快路
 function referralReady(){ return true; }
 
+// 异步并发限流器：最多 max 个任务同时在飞，其余排队
+function makeLimiter(max){
+  let active=0; const q=[];
+  const next=()=>{ if(active>=max || !q.length) return; active++; (q.shift())(); };
+  return fn => new Promise((resolve,reject)=>{
+    q.push(()=>{ Promise.resolve().then(fn).then(resolve,reject).finally(()=>{ active--; next(); }); });
+    next();
+  });
+}
+// 全局 RPC 限流：多地址并发查询时，公共节点很容易 429/限流。统一收口到 rpcFetch：
+// 限制同时在飞的 RPC 请求数，并在 429 / -32005（rate limit）时指数退避重试。
+const rpcLimit = makeLimiter(6);
+function isRpcRateLimited(status, json){
+  if(status===429) return true;
+  const err = json && json.error;
+  if(err && (err.code===-32005 || err.code===429)) return true;
+  const m = err ? String(err.message||"") : "";
+  return /rate ?limit|limit exceeded|too many request|throttl|capacity|exceeded its/i.test(m);
+}
+async function rpcFetch(body, rpc){
+  const target = rpcTarget(rpc || rpcUrlVal());
+  return rpcLimit(async ()=>{
+    let delay = 600;
+    for(let attempt=0; ; attempt++){
+      if(aborted) throw new Error("已取消");
+      const { json, status, text } = await fetchJSON(target, {
+        method:"POST", headers:{"content-type":"application/json"},
+        body: JSON.stringify({ jsonrpc:"2.0", id:1, ...body })
+      });
+      if(isRpcRateLimited(status, json) && attempt<5){
+        await sleep(delay + Math.floor(Math.random()*250)); delay = Math.min(delay*2, 8000);
+        continue;
+      }
+      if(!json) throw new Error("RPC 无响应"+(text?("："+text.slice(0,80)):""));
+      return json;
+    }
+  });
+}
 // 通用 RPC 调用
 async function rpcCall(method, params){
-  const { json } = await fetchJSON(rpcTarget(rpcUrlVal()), {
-    method:"POST", headers:{"content-type":"application/json"},
-    body: JSON.stringify({jsonrpc:"2.0",id:1,method,params})
-  });
-  if(!json) throw new Error("RPC 无响应");
+  const json = await rpcFetch({ method, params });
   if(json.error) throw new Error("RPC: "+(json.error.message||JSON.stringify(json.error)));
   return json.result;
 }
@@ -1063,6 +1101,33 @@ async function pMap(items, fn, conc){
 }
 const RECEIPT_CONC = 10; // 并发拉 receipt 的路数（RPC）
 
+/* =====================================================================
+ * 邀请人缓存 + 查询历史（持久化到 localStorage，跨查询/刷新复用）
+ *  - 命中的邀请人永久有效（链上关系不变）；
+ *  - 「未找到」按当时回溯天数缓存：再查若天数不超过则直接复用，加大天数才重查。
+ *  - 同一份数据既当缓存（避免重复请求）又当历史记录展示。
+ * ===================================================================== */
+const REFCACHE_KEY = "pf.refcache_v1";
+let _refStore = new Map();   // addrLower -> { referrer:string|null, tx:string|null, days:number, ts:number }
+try{ const s=localStorage.getItem(REFCACHE_KEY); if(s) _refStore = new Map(Object.entries(JSON.parse(s))); }catch(_){}
+function saveRefStore(){
+  try{ localStorage.setItem(REFCACHE_KEY, JSON.stringify(Object.fromEntries([..._refStore].slice(-5000)))); }catch(_){}
+}
+function refCacheGet(addr){ const k=String(addr||"").toLowerCase(); return _refStore.get(k); }
+// 判断缓存能否满足本次（days）请求：命中永久有效；未找到需当时天数 ≥ 本次
+function refCacheUsable(rec, days){ return rec && (rec.referrer || (rec.days||0) >= days); }
+function refCacheSet(addr, referrer, tx, days){
+  const k = String(addr||"").toLowerCase(); if(!k) return;
+  const ref = referrer ? String(referrer).toLowerCase() : null;
+  const prev = _refStore.get(k);
+  // 不要用「天数更小的未找到」覆盖「已命中」或「天数更大的未找到」
+  if(prev && prev.referrer && !ref) return;
+  if(prev && !prev.referrer && !ref && (prev.days||0) >= (days||0)){ return; }
+  _refStore.set(k, { referrer:ref, tx:tx||(prev&&prev.tx)||null, days:Math.max(days||0, prev&&!prev.referrer?prev.days||0:0), ts:Date.now() });
+  saveRefStore();
+  renderRefHist();
+}
+
 // 取某地址的原始成交（OPinX history，分页），用于快速找邀请人
 async function fetchOpinxTrades(address, days, maxPages){
   const end_time = Math.floor(Date.now()/1000);
@@ -1083,9 +1148,20 @@ async function fetchOpinxTrades(address, days, maxPages){
   return all;
 }
 
-// 查某地址的邀请人：先直接查它的交易记录，找它作为 taker（付费方）的一笔，从 receipt 读 referrer 即停；
-// OPinX 不可用时回退到链上 getLogs 扫描。
+// 查某地址的邀请人：先查缓存；未命中再走 OPinX 交易记录 / 链上扫描，结果写回缓存。
 async function findReferrer(address, days, onProgress){
+  const w = address.toLowerCase();
+  const cached = refCacheGet(w);
+  if(refCacheUsable(cached, days)){
+    return cached.referrer ? { referrer:cached.referrer, tx:cached.tx||null, cached:true } : null;
+  }
+  const r = await findReferrerScan(address, days, onProgress);
+  refCacheSet(w, r && r.referrer, r && r.tx, days);   // 命中或未找到都缓存
+  return r;
+}
+// 链上/接口实际扫描（不含缓存）：找它作为 taker（付费方）的一笔，从 receipt 读 referrer 即停；
+// OPinX 不可用时回退到链上 getLogs 扫描。
+async function findReferrerScan(address, days, onProgress){
   const w = address.toLowerCase();
   // —— 快路：OPinX 交易记录 ——
   try{
@@ -1605,7 +1681,7 @@ async function doFindReferrer(){
       const r = await findReferrer(addrs[0], days,
         (s,t)=> showProgress(box, "查邀请人中…", s, t));
       box.innerHTML = r
-        ? `<div>该钱包的邀请人：<b>${personHtml(r.referrer, ` <a class="addr" href="https://bscscan.com/tx/${r.tx}" target="_blank">tx↗</a>`)}</b></div>`
+        ? `<div>该钱包的邀请人：<b>${personHtml(r.referrer, (r.tx?` <a class="addr" href="https://bscscan.com/tx/${r.tx}" target="_blank">tx↗</a>`:"") + (r.cached?` <span class="hint">（缓存）</span>`:""))}</b></div>`
         : `<div class="hint">未找到邀请人（最近 ${days} 天无邀请返佣，或邀请更早，请加大天数）。</div>`;
       fillRefNames(box); return;
     }
@@ -1676,6 +1752,44 @@ async function doFindInvitees(){
  * ===================================================================== */
 $("refUp").addEventListener("click", doFindReferrer);
 $("refDown").addEventListener("click", doFindInvitees);
+
+/* ---- 查询历史 / 缓存：渲染、回填、清空 ---- */
+function renderRefHist(){
+  const wrap = $("refHistWrap"); if(!wrap) return;
+  const entries = [..._refStore.entries()].sort((a,b)=> (b[1].ts||0)-(a[1].ts||0));
+  $("refHistCount").textContent = `${entries.length} 条`;
+  if(!entries.length){ wrap.style.display="none"; return; }
+  wrap.style.display = "";
+  const fmtTime = ts => ts ? new Date(ts).toLocaleString() : "—";
+  $("refHistBody").innerHTML =
+    `<table><thead><tr><th>#</th><th>钱包</th><th>邀请人</th><th>时间</th></tr></thead><tbody>`
+    + entries.map(([addr,rec],i)=>{
+        const ref = rec.referrer
+          ? personHtml(rec.referrer)
+          : `<span class="hint">未找到${rec.days&&rec.days<1e9?`（回溯 ${rec.days} 天）`:""}</span>`;
+        return `<tr><td>${i+1}</td><td>${personHtml(addr)}</td><td>${ref}</td><td class="hint mono">${fmtTime(rec.ts)}</td></tr>`;
+      }).join("")
+    + `</tbody></table>`;
+  fillRefNames($("refHistBody"));
+}
+$("refHistFill").addEventListener("click", ()=>{
+  const addrs = [..._refStore.keys()];
+  if(!addrs.length){ toast("暂无历史"); return; }
+  $("refAddr").value = addrs.join("\n");
+  $("refAddr").scrollIntoView({ behavior:"smooth", block:"center" });
+});
+$("refHistClear").addEventListener("click", ()=>{
+  if(!_refStore.size) return;
+  if(!confirm(`确定清空 ${_refStore.size} 条邀请人查询缓存/历史？`)) return;
+  _refStore = new Map(); saveRefStore(); renderRefHist(); toast("已清空查询历史");
+});
+// 点击历史里的 @用户名 → 查积分
+$("refHistBody").addEventListener("click", e=>{
+  const u = e.target.closest(".uname[data-addr]"); if(!u) return;
+  queryPoints(u.getAttribute("data-addr"));
+  $("pointsCard").scrollIntoView({ behavior:"smooth", block:"start" });
+});
+renderRefHist();
 // 邀请结果里的 @用户名 也能点查积分
 $("refResult").addEventListener("click", e=>{
   const u = e.target.closest(".uname[data-addr]");
@@ -1985,9 +2099,11 @@ async function resolveReferredBy(addr){
   if(j.errors){ _referredBySupported=false; return undefined; } // 无此字段
   _referredBySupported = true;
   const rb = j.data && j.data.account && j.data.account.referredBy;
-  if(!rb) return null;                            // 确认无邀请人
+  if(!rb){ refCacheSet(addr, null, null, 1e9); return null; }   // GraphQL 权威：确认无邀请人，永久缓存
   const a = (typeof rb==="string") ? rb : rb.address;
-  return a ? String(a).toLowerCase() : null;
+  const ref = a ? String(a).toLowerCase() : null;
+  if(ref) refCacheSet(addr, ref, null, 1e9);                    // 权威命中，永久缓存
+  return ref;
 }
 
 // 查询后自动在后台解析对手方邀请人（谁先查到先显示；缓存复用；过期查询自动放弃）
@@ -1998,12 +2114,14 @@ async function autoResolveCpReferrers(runId, allowChain){
     const el = p.querySelector(".cpref"); if(!el) return;
     el.innerHTML = ref ? `<span class="hint">↑邀请人 ${personHtml(ref)}</span>` : `<span class="hint">↑邀请人：未找到</span>`;
   });
+  const days = 180;
   const todo = [];
   for(const addr of new Set(persons.map(p=>p.getAttribute("data-addr")))){
-    if(_cpRefCache.has(addr)) fill(addr, _cpRefCache.get(addr));
-    else { todo.push(addr); persons.filter(p=>p.getAttribute("data-addr")===addr).forEach(p=>{ const el=p.querySelector(".cpref"); if(el&&!el.innerHTML) el.innerHTML=`<span class="hint">↑邀请人 查询中…</span>`; }); }
+    if(_cpRefCache.has(addr)){ fill(addr, _cpRefCache.get(addr)); continue; }
+    const rec = refCacheGet(addr);                       // 复用持久化邀请人缓存（跨查询/刷新）
+    if(refCacheUsable(rec, days)){ _cpRefCache.set(addr, rec.referrer||null); fill(addr, rec.referrer||null); continue; }
+    todo.push(addr); persons.filter(p=>p.getAttribute("data-addr")===addr).forEach(p=>{ const el=p.querySelector(".cpref"); if(el&&!el.innerHTML) el.innerHTML=`<span class="hint">↑邀请人 查询中…</span>`; });
   }
-  const days = 180;
   await pMap(todo, async addr=>{
     if(runId!==RUN_ID || aborted) return;
     let ref;
