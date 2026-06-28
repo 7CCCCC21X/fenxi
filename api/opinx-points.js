@@ -1,5 +1,5 @@
-// GET /api/opinx-points?wallet= — 代理 OPinX 积分接口（免 Key），服务端带 Origin/Referer
-const POINTS_BASE = process.env.OPINX_POINTS_BASE || "https://tool.opinx.app/api/predict/points";
+// GET /api/opinx-points?wallet= — 代理 predalpha indexer 积分接口（免 Key），服务端带 Origin/Referer
+const POINTS_BASE = process.env.OPINX_POINTS_BASE || "https://indexer.predalpha.xyz/api/predict/points";
 
 export default async function handler(req, res) {
   const wallet = String(req.query.wallet || "");

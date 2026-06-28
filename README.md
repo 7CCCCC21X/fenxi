@@ -2,7 +2,7 @@
 
 单页工具：查某钱包在 Predict.fun（BNB Chain）的成交记录，并解析每笔交易的**真实对手方**和**邀请人**。
 
-- 交易列表来源：OPinX/predalpha（免 Key）、Predict.fun 官方 `/v1/orders/matches`、或直接扫 BSC `OrderFilled` 日志。
+- 交易列表来源：predalpha indexer（`indexer.predalpha.xyz`，免 Key）、Predict.fun 官方 `/v1/orders/matches`、或直接扫 BSC `OrderFilled` 日志。
 - 链上解析：Etherscan V2（`chainid=56` = BSC）receipt 或 BSC RPC。
 - 对手方 = 同一 tx 内 `OrderFilled` 的 maker/taker，剔除本钱包与 Exchange 合约。
 - 邀请人 = `ReferralFeeDistributed.referrer`；当同 tx `FeeRefunded.to==本钱包` 且 `feeCharged>0` 时标「本钱包」。
@@ -21,7 +21,8 @@
 | `PREDICT_API_KEY` | Predict.fun 官方 `x-api-key`（用官方来源时；也会附加到 GraphQL） | 选填 |
 | `PREDICT_GRAPHQL_AUTH` / `PREDICT_GRAPHQL_COOKIE` | Predict.fun GraphQL 登录态（个别字段需要时） | 选填 |
 | `BSC_RPC_URL` | BSC JSON-RPC 地址（用 RPC 解析时） | 选填 |
-| `OPINX_BASE` | 覆盖 OPinX 接口前缀，默认 `https://tool.opinx.app/api/predict/orders` | 选填 |
+| `OPINX_BASE` | 覆盖成交记录接口前缀，默认 `https://indexer.predalpha.xyz/api/predict/trades` | 选填 |
+| `OPINX_POINTS_BASE` | 覆盖积分接口前缀，默认 `https://indexer.predalpha.xyz/api/predict/points` | 选填 |
 | `BSC_API_BASE` | 覆盖 BSC 浏览器 API（默认 Etherscan V2）。Etherscan **免费档不覆盖 BSC**，看交易请改用 RPC；getLogs 类功能需付费 key 或换接口 | 选填 |
 
 > 设置/修改环境变量后需 **Redeploy** 才生效。
@@ -36,11 +37,11 @@
 
 - `GET /api/config` — 返回哪些 key 已配置（只返回布尔值）。
 - `GET /api/bsc` — Etherscan V2 代理（强制 `chainid=56` + 注入 key）。
-- `GET /api/opinx` — 代理 OPinX，并带 `Origin: predalpha.xyz`，绕过其来源校验（浏览器 `fetch` 无法伪造该头，这也是直连常 404 的原因）。
+- `GET /api/opinx` — 代理 predalpha indexer，并带 `Origin: predalpha.xyz`，绕过其来源校验（浏览器 `fetch` 无法伪造该头，这也是直连常 404 的原因）。
 - `GET /api/predict` — 代理 Predict.fun，注入 `x-api-key`。
 - `POST /api/rpc` — 代理 BSC RPC（`BSC_RPC_URL`）。
 - `POST /api/graphql` — 代理 Predict.fun GraphQL（带 Origin/Referer），解析**对手方/邀请人用户名**（`account(address).name`）、**市场名/网站**（`market(id).slug`）、以及**积分/持仓/PNL/排名**（`leaderboard.totalPoints`/`statistics.positionsValueUsd`/`pnlUsd`）。地址自动转 EIP-55 校验和（小写会返回 null）。
-- `GET /api/opinx-points` — 代理 OPinX 积分接口 `…/api/predict/points/{wallet}`（免 Key）。
+- `GET /api/opinx-points` — 代理 predalpha indexer 积分接口 `…/api/predict/points/{wallet}`（免 Key）。
 
 ### 积分查询
 
