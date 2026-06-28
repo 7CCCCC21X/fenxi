@@ -289,8 +289,8 @@
           <div class="hint">仅本次会话使用 · <span class="lnk" data-toggle="predictKey">显示</span></div>
         </div>
         <div class="fld" data-need="opinxBase">
-          <label for="opinxBase">OPinX 接口前缀</label>
-          <input id="opinxBase" value="https://tool.opinx.app/api/predict/trades" />
+          <label for="opinxBase">Indexer 接口前缀</label>
+          <input id="opinxBase" value="https://indexer.predalpha.xyz/api/predict/trades" />
         </div>
         <div>
           <label for="transUrl">标题翻译接口（可选，含 {q} {tl} 占位）</label>
@@ -560,25 +560,31 @@ function resolvePortfolio(addr){
     .then(j => (j && j.data && j.data.account) ? j.data.account : null)
     .catch(()=>null);
 }
-// OPINX 积分（免 Key）：https://tool.opinx.app/api/predict/points/{wallet}
+// 积分（免 Key）：https://indexer.predalpha.xyz/api/predict/points/{wallet}
 async function fetchOpinxPoints(addr){
-  const url = SERVER.enabled ? `/api/opinx-points?wallet=${addr}` : `https://tool.opinx.app/api/predict/points/${addr}`;
+  const url = SERVER.enabled ? `/api/opinx-points?wallet=${addr}` : `https://indexer.predalpha.xyz/api/predict/points/${addr}`;
   try{
     const { ok, json } = await fetchJSON(url);
     if(!ok || !json) return null;
-    // 容错地找一个“积分”数值
+    // indexer 把总积分放在 leaderboard.total_points，优先取它
     let pts = null;
-    const walk = n => {
-      if(pts!==null) return;
-      if(n && typeof n==="object"){
-        for(const [k,v] of Object.entries(n)){
-          if(typeof v==="number" && /point|score|积分/i.test(k)){ pts = v; return; }
-          walk(v);
+    if(json.leaderboard && typeof json.leaderboard.total_points === "number"){
+      pts = json.leaderboard.total_points;
+    } else {
+      // 容错地找一个“积分”数值
+      const walk = n => {
+        if(pts!==null) return;
+        if(n && typeof n==="object"){
+          for(const [k,v] of Object.entries(n)){
+            if(typeof v==="number" && /point|score|积分/i.test(k)){ pts = v; return; }
+            walk(v);
+          }
         }
-      }
-    };
-    walk(json);
-    return { points: pts, raw: json };
+      };
+      walk(json);
+    }
+    const rank = (json.leaderboard && typeof json.leaderboard.rank === "number") ? json.leaderboard.rank : null;
+    return { points: pts, rank, raw: json };
   }catch(_){ return null; }
 }
 
@@ -786,7 +792,7 @@ async function listFromOpinx(wallet, days, base){
   const w = wallet.toLowerCase();
   const end_time = Math.floor(Date.now()/1000);
   const start_time = end_time - days*86400;
-  const tradesBase = (base && /trades/.test(base)) ? base : "https://tool.opinx.app/api/predict/trades";
+  const tradesBase = (base && /trades/.test(base)) ? base : "https://indexer.predalpha.xyz/api/predict/trades";
   const items = new Map();
   const limit = 50; let offset = 0, pages = 0;
   while(pages < 60){
@@ -1060,7 +1066,7 @@ const RECEIPT_CONC = 10; // 并发拉 receipt 的路数（RPC）
 async function fetchOpinxTrades(address, days, maxPages){
   const end_time = Math.floor(Date.now()/1000);
   const start_time = end_time - days*86400;
-  const tradesBase = "https://tool.opinx.app/api/predict/trades";
+  const tradesBase = "https://indexer.predalpha.xyz/api/predict/trades";
   const all = []; const limit=50; let offset=0, pages=0; maxPages = maxPages||4;
   while(pages<maxPages){
     if(aborted) break;
@@ -1551,7 +1557,7 @@ async function queryPoints(address){
   const cells = [
     ["OPINX 积分", opinx && opinx.points!=null ? Number(opinx.points).toLocaleString() : "—"],
     ["Predict 积分", lb.totalPoints!=null ? Number(lb.totalPoints).toLocaleString() : "—"],
-    ["排名", lb.rank!=null ? "#"+lb.rank : "—"],
+    ["排名", lb.rank!=null ? "#"+lb.rank : (opinx && opinx.rank!=null ? "#"+opinx.rank : "—")],
     ["持仓价值", fmtUsd(st.positionsValueUsd), ""],
     ["PNL", fmtUsd(pnl), (pnl>0?"pos":pnl<0?"neg":"")],
     ["交易量", fmtUsd(st.volumeUsd)],

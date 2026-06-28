@@ -1,7 +1,7 @@
 // GET /api/opinx?wallet=&limit=&offset=&sort=&start_time=&end_time=
-// 代理 OPinX/predalpha 成交历史接口 /api/predict/trades/{wallet}/history（免 Key）。
+// 代理 predalpha indexer 成交历史接口 /api/predict/trades/{wallet}/history（免 Key）。
 // 服务端带 Origin/Referer，绕过其浏览器来源校验（前端 fetch 无法伪造这些头）。
-const TRADES_BASE = process.env.OPINX_BASE || "https://tool.opinx.app/api/predict/trades";
+const TRADES_BASE = process.env.OPINX_BASE || "https://indexer.predalpha.xyz/api/predict/trades";
 
 export default async function handler(req, res) {
   const wallet = String(req.query.wallet || "");
