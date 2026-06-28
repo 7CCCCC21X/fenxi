@@ -557,8 +557,11 @@ function resolveAccount(addr){
   const key = addr.toLowerCase();
   if(_acctCache.has(key)) return _acctCache.get(key);
   const p = gql(`query A($a:Address!){account(address:$a){name referralCode}}`, { a: toChecksum(addr) })
-    .then(j => (j && j.data && j.data.account) ? j.data.account : null)
-    .catch(()=>null);
+    .then(j => {
+      if(!j){ _acctCache.delete(key); return null; }    // GraphQL 代理不可用 → 不长期缓存，下次出现该地址再重试
+      return (j.data && j.data.account) ? j.data.account : null;   // 有效响应（即使无用户名）才缓存
+    })
+    .catch(()=>{ _acctCache.delete(key); return null; });
   _acctCache.set(key, p);
   return p;
 }
@@ -1110,6 +1113,13 @@ const RECEIPT_CONC = 10; // 并发拉 receipt 的路数（RPC）
 const REFCACHE_KEY = "pf.refcache_v1";
 let _refStore = new Map();   // addrLower -> { referrer:string|null, tx:string|null, days:number, ts:number }
 try{ const s=localStorage.getItem(REFCACHE_KEY); if(s) _refStore = new Map(Object.entries(JSON.parse(s))); }catch(_){}
+// 迁移修复：清掉旧版里不可靠的链上「未找到」负缓存（可能因限流/超时/回溯不足产生），
+// 仅保留命中与 GraphQL 权威的「无邀请人」(days=1e9)，避免把可查到的地址永久钉死为未找到。
+(function pruneBadNegatives(){
+  let changed=false;
+  for(const [k,v] of [..._refStore]){ if(v && !v.referrer && (v.days||0) < 1e9){ _refStore.delete(k); changed=true; } }
+  if(changed){ try{ localStorage.setItem(REFCACHE_KEY, JSON.stringify(Object.fromEntries([..._refStore]))); }catch(_){} }
+})();
 function saveRefStore(){
   try{ localStorage.setItem(REFCACHE_KEY, JSON.stringify(Object.fromEntries([..._refStore].slice(-5000)))); }catch(_){}
 }
@@ -1156,7 +1166,9 @@ async function findReferrer(address, days, onProgress){
     return cached.referrer ? { referrer:cached.referrer, tx:cached.tx||null, cached:true } : null;
   }
   const r = await findReferrerScan(address, days, onProgress);
-  refCacheSet(w, r && r.referrer, r && r.tx, days);   // 命中或未找到都缓存
+  // 只持久化「命中」：链上「未找到」可能是回溯范围不足 / 限流 / 超时所致，不可靠；
+  // 若缓存它，会把本可查到的地址永远显示为「未找到」。未找到只留会话内存，刷新后可重查。
+  if(r && r.referrer) refCacheSet(w, r.referrer, r.tx, days);
   return r;
 }
 // 链上/接口实际扫描（不含缓存）：找它作为 taker（付费方）的一笔，从 receipt 读 referrer 即停；
