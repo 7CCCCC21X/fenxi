@@ -44,7 +44,7 @@
   .theme-btn{margin-left:auto;width:34px;height:34px;border-radius:9px;border:1px solid var(--border2);background:var(--panel2);color:var(--text);font-size:15px;cursor:pointer;box-shadow:none;padding:0;flex:0 0 auto}
   .theme-btn:hover{filter:none;background:var(--panel3)}
 
-  .wrap{max-width:1320px;margin:0 auto;padding:22px}
+  .wrap{max-width:min(1760px,96vw);margin:0 auto;padding:22px}
   .card{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:var(--shadow)}
   .card-title{font-size:12px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.8px;margin:0 0 14px;display:flex;align-items:center;gap:8px}
   .card-title::before{content:"";width:3px;height:13px;border-radius:2px;background:linear-gradient(var(--accent),var(--accent2))}
@@ -107,10 +107,10 @@
   tbody tr:nth-child(even) td{background:rgba(255,255,255,.012)}
   tbody tr:hover td{background:rgba(77,141,255,.07)}
   td.num{font-family:var(--mono);text-align:right;color:var(--num);font-size:12.5px}
-  /* 市场列：完整显示大标题（长标题换行而非省略号），并把标题字号/字重做大一点 */
-  th[data-col="市场"],td[data-label="市场"]{max-width:340px}
-  td[data-label="市场"] a,td[data-label="市场"] .mkt,td[data-label="市场"] .mkt-t{display:inline-block;max-width:330px;white-space:normal;overflow-wrap:anywhere;vertical-align:top}
-  td[data-label="市场"] .mkt-t{font-size:13.5px;font-weight:600;line-height:1.3;color:var(--text)}
+  /* 市场列：显示大标题，但最多 2 行（超出省略号），避免长标题把行撑得过高；完整标题见 hover 提示 */
+  th[data-col="市场"],td[data-label="市场"]{max-width:300px}
+  td[data-label="市场"] a,td[data-label="市场"] .mkt,td[data-label="市场"] .mkt-t{max-width:290px;vertical-align:top}
+  td[data-label="市场"] .mkt-t{display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;font-size:13px;font-weight:600;line-height:1.3;color:var(--text)}
 
   .tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.3px}
   .tag.buy{background:rgba(70,208,127,.16);color:var(--green);border:1px solid rgba(70,208,127,.35)}
