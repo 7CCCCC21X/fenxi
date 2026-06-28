@@ -552,13 +552,21 @@ async function gql(query, variables){
   }
 }
 const _acctCache = new Map();   // addr -> Promise<{name,referralCode}|null>
+// 用户名整体解析失败时只提示一次，便于排查（GraphQL 不可用 / 鉴权过期 / 字段变更）
+let _acctDiagDone = false;
+function acctDiag(detail){
+  if(_acctDiagDone) return; _acctDiagDone = true;
+  log("用户名解析失败（Predict GraphQL）：" + detail
+    + " — 多为 /api/graphql 不可用，或 PREDICT_GRAPHQL_AUTH / PREDICT_GRAPHQL_COOKIE 登录态过期（account 名称需登录态），更新后需 Redeploy。", "err");
+}
 function resolveAccount(addr){
   if(!addr) return Promise.resolve(null);
   const key = addr.toLowerCase();
   if(_acctCache.has(key)) return _acctCache.get(key);
   const p = gql(`query A($a:Address!){account(address:$a){name referralCode}}`, { a: toChecksum(addr) })
     .then(j => {
-      if(!j){ _acctCache.delete(key); return null; }    // GraphQL 代理不可用 → 不长期缓存，下次出现该地址再重试
+      if(!j){ acctDiag("/api/graphql 无响应或非 JSON"); _acctCache.delete(key); return null; } // 代理不可用 → 不长期缓存，下次重试
+      if(j.errors){ acctDiag(JSON.stringify(j.errors).slice(0,180)); }   // 报错记一次（仍缓存 null，避免请求风暴）
       return (j.data && j.data.account) ? j.data.account : null;   // 有效响应（即使无用户名）才缓存
     })
     .catch(()=>{ _acctCache.delete(key); return null; });
