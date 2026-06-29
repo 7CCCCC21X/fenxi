@@ -544,7 +544,10 @@ async function gql(query, variables){
   const target = (SERVER.enabled) ? "/api/graphql" : PREDICT_GRAPHQL; // 直连常因 CORS 失败，建议用服务端代理
   try{
     // 走 fetchJSON 以带上超时，避免 GraphQL 卡住时永远挂起
-    const { json } = await fetchJSON(target, { method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify({ query, variables }), timeout: 15000 });
+    const { ok, json } = await fetchJSON(target, { method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify({ query, variables }), timeout: 15000 });
+    // 代理/网关非 2xx（502/504/限流 429 等）不是权威数据 → 返回 null，调用方据此不缓存以便下次重试。
+    // 注意：GraphQL 校验错误通常仍是 200 带 {errors}，会原样返回，buildMarketIndex 等仍可据此降级。
+    if(!ok) return null;
     return json;
   }catch(e){
     if(!SERVER.enabled){ GQL_DISABLED = true; log("GraphQL 直连失败（CORS）：用户名/市场名需部署到 Vercel 走 /api/graphql。", "err"); }
@@ -558,8 +561,10 @@ function resolveAccount(addr){
   if(_acctCache.has(key)) return _acctCache.get(key);
   const p = gql(`query A($a:Address!){account(address:$a){name referralCode}}`, { a: toChecksum(addr) })
     .then(j => {
-      if(!j){ _acctCache.delete(key); return null; }    // GraphQL 代理不可用 → 不长期缓存，下次出现该地址再重试
-      return (j.data && j.data.account) ? j.data.account : null;   // 有效响应（即使无用户名）才缓存
+      // 仅在拿到「权威响应」时缓存：代理不可用(null)、GraphQL 报错(errors)、或无 data 字段，
+      // 都属于瞬时/服务端失败，删除缓存以便该地址下次再现时重试，避免用户名被永久钉成空白。
+      if(!j || j.errors || !j.data){ _acctCache.delete(key); return null; }
+      return j.data.account || null;   // 有效响应（即使该账号无用户名）才缓存
     })
     .catch(()=>{ _acctCache.delete(key); return null; });
   _acctCache.set(key, p);
