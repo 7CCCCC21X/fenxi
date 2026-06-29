@@ -502,8 +502,9 @@ const topicToAddr = t => t ? ("0x"+t.slice(-40)).toLowerCase() : null;
 const bg = h => BigInt(h && h!=="0x" ? (h.startsWith("0x")?h:"0x"+h) : "0");
 
 /* ---- keccak-256 + EIP-55 校验和 ----
- * 注意：Predict GraphQL 的 account(address) 现在要用「小写」地址；早前传 checksummed 会查不到名字
- * （参考可用的 predict_whale_bot：variables 直接用 address.lower()）。本函数保留备用，不再用于 GraphQL 查询。 */
+ * Predict GraphQL 的 account(address) 需要「校验和(EIP-55)」地址，传全小写会返回 account:null。
+ * （对照可用的 predict_whale_bot：它把 Predict API 返回的 signer 原样【checksummed】传给查询。）
+ * 所以 resolveAccount/resolvePortfolio/resolveReferredBy 的入参一律 toChecksum() 后再查。 */
 const _RC=[0x0000000000000001n,0x0000000000008082n,0x800000000000808An,0x8000000080008000n,0x000000000000808Bn,0x0000000080000001n,0x8000000080008081n,0x8000000000008009n,0x000000000000008An,0x0000000000000088n,0x0000000080008009n,0x000000008000000An,0x000000008000808Bn,0x800000000000008Bn,0x8000000000008089n,0x8000000000008003n,0x8000000000008002n,0x8000000000000080n,0x000000000000800An,0x800000008000000An,0x8000000080008081n,0x8000000000008080n,0x0000000080000001n,0x8000000080008008n];
 const _RO=[0,1,62,28,27,36,44,6,55,20,3,10,43,25,39,41,45,15,21,8,18,2,61,56,14];
 const _M64=(1n<<64n)-1n;
@@ -592,7 +593,7 @@ function resolveAccount(addr){
   if(!addr) return Promise.resolve(null);
   const key = addr.toLowerCase();
   if(_acctCache.has(key)) return _acctCache.get(key);
-  const p = gql(`query A($a:Address!){account(address:$a){name referralCode}}`, { a: addr.toLowerCase() })
+  const p = gql(`query A($a:Address!){account(address:$a){name referralCode}}`, { a: toChecksum(addr) })
     .then(j => {
       // 仅在拿到「权威响应」时缓存：代理不可用(null)、GraphQL 报错(errors)、或无 data 字段，
       // 都属于瞬时/服务端失败，删除缓存以便该地址下次再现时重试，避免用户名被永久钉成空白。
@@ -607,7 +608,7 @@ function resolveAccount(addr){
 function resolvePortfolio(addr){
   if(!addr) return Promise.resolve(null);
   return gql(`query P($a:Address!){account(address:$a){name referralCode pointsEarningRatio leaderboard{totalPoints rank} statistics{volumeUsd positionsValueUsd pnlUsd marketsCount}}}`,
-    { a: addr.toLowerCase() })
+    { a: toChecksum(addr) })
     .then(j => (j && j.data && j.data.account) ? j.data.account : null)
     .catch(()=>null);
 }
@@ -2173,7 +2174,7 @@ $("analysisRefresh").addEventListener("click", runAnalysis);
 let _referredBySupported = null; // null 未知, false 不支持
 async function resolveReferredBy(addr){
   if(_referredBySupported===false) return undefined;
-  const j = await gql(`query R($a:Address!){account(address:$a){referredBy{address name}}}`, { a: addr.toLowerCase() });
+  const j = await gql(`query R($a:Address!){account(address:$a){referredBy{address name}}}`, { a: toChecksum(addr) });
   if(!j) return undefined;                       // GraphQL 不可达 → 未知，交给链上回退
   if(j.errors){ _referredBySupported=false; return undefined; } // 无此字段
   _referredBySupported = true;
