@@ -485,6 +485,11 @@ const CHAIN_ID = 56;
  * 工具函数
  * ===================================================================== */
 const $ = id => document.getElementById(id);
+// localStorage 封装（早定义：renderRefHist() 等顶层初始化会用到，避免 const TDZ 报错）
+const LS = {
+  get:(k,d)=>{ try{ const v=localStorage.getItem("pf."+k); return v==null?d:v; }catch(_){ return d; } },
+  set:(k,v)=>{ try{ localStorage.setItem("pf."+k, v); }catch(_){} },
+};
 let aborted = false;
 let RESULTS = []; // 当前结果的 <tr> 列表（含 tr._rec），供筛选/排序/导出
 let RUN_ID = 0;   // 每次查询自增；后台任务据此判断是否已过期
@@ -2280,10 +2285,6 @@ document.querySelectorAll(".lnk[data-toggle]").forEach(s=> s.addEventListener("c
 $("status").setAttribute("aria-live","polite");
 
 /* ---- 主题（深/浅）+ 本地记忆（不存任何 API Key） ---- */
-const LS = {
-  get:(k,d)=>{ try{ const v=localStorage.getItem("pf."+k); return v==null?d:v; }catch(_){ return d; } },
-  set:(k,v)=>{ try{ localStorage.setItem("pf."+k, v); }catch(_){} },
-};
 function applyTheme(t){ document.documentElement.dataset.theme = t; $("themeBtn").textContent = t==="light"?"☀️":"🌙"; LS.set("theme", t); }
 $("themeBtn").addEventListener("click", ()=> applyTheme(document.documentElement.dataset.theme==="light"?"dark":"light"));
 applyTheme(LS.get("theme", "dark"));
