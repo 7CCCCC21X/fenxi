@@ -556,15 +556,18 @@ function isGqlRateLimited(status, json){
   return false;
 }
 async function gql(query, variables){
-  if(GQL_DISABLED) return null;
   const direct = !SERVER.enabled;                       // 无服务端代理时直连（本地/纯静态），CORS 失败不可恢复，不重试
+  // GQL_DISABLED 只表示「直连(无代理)已被 CORS 永久拒绝」，仅在直连模式下短路；
+  // 一旦探测到服务端代理(SERVER.enabled=true)，即使早前(探测完成前/瞬时)直连置位过，也照常走 /api/graphql。
+  // 此前它是「一次失败永久禁用」的单向闸，会导致代理可用却再也不发任何请求 → 用户名永远查不到。
+  if(GQL_DISABLED && direct) return null;
   const target = direct ? PREDICT_GRAPHQL : "/api/graphql";
   return gqlLimit(async ()=>{
     let delay = 500;
     for(let attempt=0; ; attempt++){
       // 进入队列后再判一次：突发并发会把几百路请求一次性排进来，首个直连 CORS 失败已置位
       // GQL_DISABLED，则其余排队任务直接放弃，不再逐个发出注定失败的跨域请求（避免 5xx 个 403）。
-      if(aborted || GQL_DISABLED) return null;
+      if(aborted || (GQL_DISABLED && direct)) return null;
       try{
         // 走 fetchJSON 以带上超时，避免 GraphQL 卡住时永远挂起
         const { ok, status, json } = await fetchJSON(target, { method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify({ query, variables }), timeout: 15000 });
@@ -733,7 +736,7 @@ async function detectServer(){
     const timer = setTimeout(()=>ctrl.abort(), 6000); // /api/config 卡住时不拖住整个查询
     const r = await fetch("/api/config", { cache:"no-store", signal: ctrl.signal });
     clearTimeout(timer);
-    if(r.ok){ const j = await r.json(); SERVER = { ...j, enabled:true }; }
+    if(r.ok){ const j = await r.json(); SERVER = { ...j, enabled:true }; GQL_DISABLED = false; } // 探测到代理则解除直连失败留下的禁用闸
     else SERVER = { enabled:false };
   }catch(_){ SERVER = { enabled:false }; }
   return SERVER;
