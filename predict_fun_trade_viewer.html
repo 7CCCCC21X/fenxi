@@ -559,7 +559,9 @@ async function gql(query, variables){
   return gqlLimit(async ()=>{
     let delay = 500;
     for(let attempt=0; ; attempt++){
-      if(aborted) return null;
+      // 进入队列后再判一次：突发并发会把几百路请求一次性排进来，首个直连 CORS 失败已置位
+      // GQL_DISABLED，则其余排队任务直接放弃，不再逐个发出注定失败的跨域请求（避免 5xx 个 403）。
+      if(aborted || GQL_DISABLED) return null;
       try{
         // 走 fetchJSON 以带上超时，避免 GraphQL 卡住时永远挂起
         const { ok, status, json } = await fetchJSON(target, { method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify({ query, variables }), timeout: 15000 });
