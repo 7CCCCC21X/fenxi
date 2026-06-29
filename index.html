@@ -248,6 +248,7 @@
         <label for="wallet">钱包地址 Wallet</label>
         <input id="wallet" autocomplete="off" spellcheck="false" placeholder="0x… 40 位钱包地址" aria-describedby="walletErr" />
         <div id="walletErr" class="field-err" style="display:none"></div>
+        <div id="walletName" style="display:none;margin-top:4px;font-size:12.5px"></div>
       </div>
       <div>
         <label for="days">天数 Days</label>
@@ -1522,6 +1523,25 @@ function validateWallet(){
   el.classList.add("valid"); el.classList.remove("invalid"); err.style.display="none";
   return true;
 }
+// 一有合法地址就查它的用户名并显示在输入框下方（点击可查积分）。
+let _walletNameAddr = null;
+async function showWalletName(){
+  const v = $("wallet").value.trim();
+  const box = $("walletName");
+  if(!isAddr(v)){ box.style.display="none"; box.textContent=""; box.onclick=null; _walletNameAddr=null; return; }
+  const key = v.toLowerCase();
+  if(_walletNameAddr===key) return;                 // 同一地址不重复查
+  _walletNameAddr = key;
+  box.style.display=""; box.className="hint"; box.style.cursor="default"; box.onclick=null; box.textContent="查询用户名…";
+  const acct = await resolveAccount(v);
+  if(_walletNameAddr!==key) return;                 // 期间地址又改了，丢弃旧结果
+  if(acct && acct.name){
+    box.className="uname"; box.textContent="@"+acct.name;
+    box.style.cursor="pointer"; box.title="点击查积分"; box.onclick=()=>queryPoints(v);
+  }else{
+    box.className="hint"; box.textContent="该地址暂无用户名";
+  }
+}
 function hideAction(){ $("actionBar").style.display="none"; }
 function showActionError(msg){
   const bar = $("actionBar");
@@ -1864,7 +1884,7 @@ $("tbody").addEventListener("click", e=>{
 $("go").addEventListener("click", run);
 $("stop").addEventListener("click", ()=>{ aborted=true; setStatus("停止中…"); });
 $("wallet").addEventListener("keydown", e=>{ if(e.key==="Enter") run(); });
-$("wallet").addEventListener("input", validateWallet);
+$("wallet").addEventListener("input", ()=>{ validateWallet(); showWalletName(); });
 
 /* ---- Tab 切换 ---- */
 document.querySelectorAll(".tab").forEach(t=> t.addEventListener("click", ()=>{
@@ -2114,7 +2134,7 @@ function exportCsv(){
   a.click(); URL.revokeObjectURL(a.href);
 }
 $("exportCsv").addEventListener("click", exportCsv);
-$("useExample").addEventListener("click", ()=>{ $("wallet").value="0xab929df893b7e6202539aae41c86afc7ab575821"; validateWallet(); run(); });
+$("useExample").addEventListener("click", ()=>{ $("wallet").value="0xab929df893b7e6202539aae41c86afc7ab575821"; validateWallet(); showWalletName(); run(); });
 
 // 全选 / 全不选（仅作用于可见行）
 $("selAll").addEventListener("change", ()=>{
@@ -2278,6 +2298,7 @@ validateWallet();
   const savedSrc = LS.get("source"), savedEnr = LS.get("enrich");
   if(savedSrc){ $("source").value = savedSrc; if(savedEnr) $("enrich").value = savedEnr; syncFieldsFromControls(); }
   else applyMode("precise");   // 默认精准解析
+  showWalletName();            // 代理探测完成后，立刻显示已填地址（默认/记忆）的用户名
 })();
 </script>
 </body>
