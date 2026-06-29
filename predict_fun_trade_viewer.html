@@ -559,7 +559,9 @@ async function gql(query, variables){
   return gqlLimit(async ()=>{
     let delay = 500;
     for(let attempt=0; ; attempt++){
-      if(aborted) return null;
+      // 进入队列后再判一次：突发并发会把几百路请求一次性排进来，首个直连 CORS 失败已置位
+      // GQL_DISABLED，则其余排队任务直接放弃，不再逐个发出注定失败的跨域请求（避免 5xx 个 403）。
+      if(aborted || GQL_DISABLED) return null;
       try{
         // 走 fetchJSON 以带上超时，避免 GraphQL 卡住时永远挂起
         const { ok, status, json } = await fetchJSON(target, { method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify({ query, variables }), timeout: 15000 });
@@ -1421,6 +1423,7 @@ async function run(){
     let totUsdtIn=0n, totUsdtOut=0n, totFee=0n;
     const refSet = new Set(), cpSet = new Set();
     let done=0;
+    const enrichJobs = [];   // 收集每行「用户名补全」promise，确保用户名先显示再解析邀请人
     const CONC = enrich==="none" ? 16 : (enrich==="rpc" ? RECEIPT_CONC : 3);
     await pMap(items, async (it)=>{
       if(aborted) return;
@@ -1447,15 +1450,20 @@ async function run(){
       const tr = renderRow(it, parsed, wallet);
       tbody.appendChild(tr);
       RESULTS.push(tr);
-      enrichRow(tr, parsed); // 异步补用户名 / 市场名（Predict GraphQL）
+      enrichJobs.push(enrichRow(tr, parsed)); // 异步补用户名 / 市场名（Predict GraphQL）
       done++;
       setStatus(enrich==="none" ? `② 展示 ${done}/${items.length} …` : `② 解析链上 receipt ${done}/${items.length} …`);
       setProgress(done, items.length);
     }, CONC);
     if(RESULTS.length){
       $("toolbar").style.display = "flex"; populateMarketFilter(); applyTableView(); autoHideEmptyColumns(enrich);
-      // 后台自动解析对手方邀请人：先 GraphQL（对 maker 也有效），精准模式再允许链上回退
-      autoResolveCpReferrers(myRun, enrich!=="none");
+      // 先把用户名补齐显示，再启动更重的对手方邀请人/链上解析：
+      // 否则两者抢同一条 GraphQL 限流通道、邀请人还会回退到慢链上 RPC，把用户名挤到最后才出现。
+      setStatus("② 补用户名…");
+      Promise.allSettled(enrichJobs).then(()=>{
+        if(myRun!==RUN_ID || aborted) return;   // 已开始新查询/已取消 → 不再启动后台解析
+        autoResolveCpReferrers(myRun, enrich!=="none");
+      });
       if($("transTitles").checked) applyTitleTranslation(true);
     }
 
@@ -1642,16 +1650,17 @@ function renderRow(it, p, wallet){
 }
 
 // 用 Predict GraphQL 异步补：对手方/邀请人用户名 + 市场名/网站（失败则静默保留地址/标题）
+// 返回「用户名补全」的 promise：上层据此先把用户名显示出来，再启动更重的对手方邀请人/链上解析。
 function enrichRow(tr, p){
-  tr.querySelectorAll(".uname[data-addr]").forEach(async el=>{
+  const unameP = Promise.all([...tr.querySelectorAll(".uname[data-addr]")].map(async el=>{
     const acct = await resolveAccount(el.getAttribute("data-addr"));
     if(acct && acct.name){ el.textContent = " @"+acct.name; el.setAttribute("data-name", acct.name); }
-  });
+  }));
   const mktEl = tr.querySelector(".mkt");
   const cid = mktEl && mktEl.getAttribute("data-cid");
   if(mktEl){
-    if(!cid){ mktEl.textContent = "—"; return; }
-    resolveMarket(cid).then(m=>{
+    if(!cid){ mktEl.textContent = "—"; }
+    else resolveMarket(cid).then(m=>{
       if(m && m.title){
         mktEl.innerHTML = m.url ? `<a href="${m.url}" target="_blank">${m.title} ↗</a>` : m.title;
         if(tr._rec){ tr._rec.market = m.title; setColVisible("市场", true); populateMarketFilter(); } // 补市场列与筛选下拉
@@ -1661,6 +1670,7 @@ function enrichRow(tr, p){
       }
     });
   }
+  return unameP;
 }
 
 /* =====================================================================
