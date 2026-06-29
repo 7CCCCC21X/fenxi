@@ -1396,6 +1396,8 @@ async function run(){
   DEDUP = false; $("dedupCp").checked = false;
   HIDEABLE_COLS.forEach(c=>setColVisible(c.label, true)); // 复位列可见性
   RESULTS = [];
+  _acctCache.clear();   // 每次查询清空用户名内存缓存：上次因后端未就绪而缓存的「无用户名」不再钉死，本次重新解析
+  _walletNameAddr = null;
   setProgress(0, 0);
 
   try{
