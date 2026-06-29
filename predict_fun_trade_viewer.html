@@ -434,11 +434,14 @@
       <div id="refHistWrap" style="margin-top:16px;display:none">
         <div class="row" style="align-items:center;gap:8px;margin-bottom:8px">
           <div class="card-title" style="margin:0">查询历史 · 缓存 <span id="refHistCount" class="pill"></span></div>
-          <button id="refHistFill" class="secondary" type="button" title="把历史里的地址全部填入上面的输入框" style="margin-left:auto">填回输入框</button>
+          <button id="refHistToggle" class="secondary" type="button" title="展开/隐藏查询历史列表" style="margin-left:auto">展开</button>
+          <button id="refHistFill" class="secondary" type="button" title="把历史里的地址全部填入上面的输入框">填回输入框</button>
           <button id="refHistClear" class="secondary" type="button" title="清空本地缓存的查询历史">清空</button>
         </div>
-        <div class="hint" id="refHistHint" style="margin-bottom:8px">命中的邀请人永久缓存；「未找到」按当时回溯天数缓存，加大天数会重查。</div>
-        <div class="scroll" id="refHistBody" style="max-height:40vh"></div>
+        <div id="refHistDetail" style="display:none">
+          <div class="hint" id="refHistHint" style="margin-bottom:8px">命中的邀请人永久缓存；「未找到」按当时回溯天数缓存，加大天数会重查。</div>
+          <div class="scroll" id="refHistBody" style="max-height:40vh"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -1851,6 +1854,13 @@ function renderRefHist(){
       }).join("")
     + `</tbody></table>`;
   fillRefNames($("refHistBody"));
+  applyRefHistCollapsed();   // 保持当前折叠状态（默认隐藏列表，仅留标题+条数）
+}
+// 邀请关系查询历史：默认隐藏列表，点「展开」可显示，状态记忆到本地。
+function applyRefHistCollapsed(){
+  const collapsed = LS.get("refHistCollapsed","1")==="1";   // 默认折叠
+  const d = $("refHistDetail"); if(d) d.style.display = collapsed ? "none" : "";
+  const b = $("refHistToggle"); if(b) b.textContent = collapsed ? "展开" : "隐藏";
 }
 $("refHistFill").addEventListener("click", ()=>{
   const addrs = [..._refStore.keys()];
@@ -1862,6 +1872,11 @@ $("refHistClear").addEventListener("click", ()=>{
   if(!_refStore.size) return;
   if(!confirm(`确定清空 ${_refStore.size} 条邀请人查询缓存/历史？`)) return;
   _refStore = new Map(); saveRefStore(); renderRefHist(); toast("已清空查询历史");
+});
+$("refHistToggle").addEventListener("click", ()=>{
+  const collapsed = LS.get("refHistCollapsed","1")==="1";
+  LS.set("refHistCollapsed", collapsed ? "0" : "1");   // 翻转并记忆
+  applyRefHistCollapsed();
 });
 // 点击历史里的 @用户名 → 查积分
 $("refHistBody").addEventListener("click", e=>{
