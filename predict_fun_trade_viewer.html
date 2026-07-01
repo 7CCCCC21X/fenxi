@@ -863,6 +863,48 @@ function mergeOpinxTrades(items, rows, w){
     } else items.set(k, it);
   }
 }
+// 解析新接口 /orders?days=N 的嵌套结构：{ markets:[ { orders:[ { fills:[...] } ] } ] }
+// 每个 fill 自带 counterparty（真实对手方，已解析）；按 tx 合并成内部记录。返回数组；结构不符返回 null。
+function parseOpinxOrders(json, w){
+  if(json && Array.isArray(json.markets)){
+    const items = new Map();
+    for(const mk of json.markets){
+      const market = mk.market_title || "", slug = mk.category_slug || "", marketId = mk.market_id;
+      for(const od of (Array.isArray(mk.orders) ? mk.orders : [])){
+        const price = Number(od.avg_price) || null;
+        const role = String(od.user_role || "").toLowerCase();
+        const side = String(od.user_side || "").toUpperCase();
+        const outcome = od.outcome || "";
+        for(const f of (Array.isArray(od.fills) ? od.fills : [])){
+          if(!f.tx_hash) continue;
+          // maker_amount / taker_amount 哪条是 USDT、哪条是份额：份额×均价≈USDT，用它判定（与 side 无关）
+          const a = Number(f.maker_amount) || 0, b = Number(f.taker_amount) || 0;
+          let shares, usdt;
+          if(price>0){ if(Math.abs(a*price-b) <= Math.abs(b*price-a)){ shares=a; usdt=b; } else { shares=b; usdt=a; } }
+          else if(/BUY|BID|LONG/.test(side)){ usdt=a; shares=b; } else { shares=a; usdt=b; }
+          let cp = String(f.counterparty || "").toLowerCase();
+          if(!cp || cp===w || EXCHANGES.has(cp)) cp = null;   // 剔除本钱包与撮合合约
+          const fee = Number(f.fee_usdt) || 0;
+          const k = f.tx_hash.toLowerCase(), prev = items.get(k);
+          if(prev){ // 同一 tx 多笔 fill → 累加
+            prev.usdt += usdt; prev.shares += shares; prev.fee += fee;
+            prev.avg_price = prev.shares>0 ? prev.usdt/prev.shares : prev.avg_price;
+            if(!prev.counterparty && cp) prev.counterparty = cp;
+          } else items.set(k, {
+            tx_hash: f.tx_hash, ts: f.ts, market, slug, marketId, outcome,
+            counterparty: cp, role: (role==="maker"||role==="taker")?role:null, side,
+            usdt, shares, fee, avg_price: price!=null ? price : (shares>0 ? usdt/shares : null),
+          });
+        }
+      }
+    }
+    return [...items.values()];
+  }
+  // 兜底：若新接口某天改回扁平数组结构（trades/data/orders…），用旧字段解析
+  const rows = pickTradesArray(json);
+  if(Array.isArray(rows)){ const items = new Map(); mergeOpinxTrades(items, rows, w); return [...items.values()]; }
+  return null;
+}
 // OPinX 成交列表：新接口 /orders/{wallet}?days=N 优先，失败/空则回退旧的 /trades/{wallet}/history（分页）
 async function listFromOpinx(wallet, days, base){
   const w = wallet.toLowerCase();
@@ -874,14 +916,12 @@ async function listFromOpinx(wallet, days, base){
       : `${ordersBase.replace(/\/$/,"")}/${wallet}?days=${days}`;
     const { ok, status, json, text } = await fetchJSON(url);
     if(ok && json){
-      const rows = pickTradesArray(json);
-      if(Array.isArray(rows)){
-        const items = new Map();
-        mergeOpinxTrades(items, rows, w);
-        setStatus(`① 拉取交易列表…（${items.size}）`);
-        if(items.size){ log(`OPinX /orders 命中 ${items.size} 笔 tx`); return [...items.values()]; }
+      const parsed = parseOpinxOrders(json, w);
+      if(parsed){
+        setStatus(`① 拉取交易列表…（${parsed.length}）`);
+        if(parsed.length){ log(`OPinX /orders 命中 ${parsed.length} 笔 tx`); return parsed; }
         log("OPinX /orders 返回 0 笔，回退 /trades/history 再试");
-      } else log("OPinX /orders 响应无交易数组，回退 /trades/history");
+      } else log("OPinX /orders 结构无法识别，回退 /trades/history");
     } else log(`OPinX /orders 不可用（HTTP ${status}${text?(" | "+text.slice(0,80)):""}），回退 /trades/history`);
   }catch(e){ log(`OPinX /orders 异常（${e.message}），回退 /trades/history`); }
 
