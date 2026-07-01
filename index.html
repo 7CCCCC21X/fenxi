@@ -330,6 +330,7 @@
         <code>对手方</code> = 同一笔 tx 内所有 OrderFilled 的 maker/taker，剔除本钱包与 Exchange 撮合合约后剩下的真实地址。
         <code>邀请人</code> = <code>ReferralFeeDistributed.referrer</code>；当同一笔 <code>FeeRefunded.to</code> 为本钱包且 <code>feeCharged&gt;0</code> 时标记为「本钱包相关」。
         <code>净手续费</code> 取 <code>FeeRefunded.feeCharged</code>（退款后实际收取）。
+        <code>手续费率</code> = 净手续费 ÷ 份额（退款后实际费率，如 3.6/200 = 1.8%）；<code>均价</code>下方小字为隐含概率（均价×100%）；<code>推荐返佣占比</code> = <code>ReferralFeeDistributed</code> 返佣额 ÷ 实收手续费（如 0.72/3.6 = 20%），仅本钱包实付费时显示。
         <code>@用户名</code> / <code>市场名·网站</code> 由 Predict.fun GraphQL 解析，需走 <code>/api/graphql</code>。地址会自动转 EIP-55 校验和。
       </div>
     </details>
@@ -355,6 +356,7 @@
           <option value="usdt">金额 ↓</option>
           <option value="fee">手续费 ↓</option>
           <option value="price">均价 ↓</option>
+          <option value="feeRate">手续费率 ↓</option>
         </select>
         <button class="secondary" id="cpRefBtn" title="解析每个对手方各自的邀请人（链上扫描，稍慢）">对手方邀请人</button>
         <button class="secondary" id="analyzeBtn" title="按邀请人分组统计对手方（去重），跟随筛选">数据分析</button>
@@ -365,7 +367,7 @@
     <div id="tableNote" class="banner info" style="display:none;margin-bottom:12px"></div>
     <div class="scroll">
       <table id="resultTable">
-        <caption class="sr-only">钱包成交记录：时间、市场、角色、方向、金额、份额、均价、手续费、对手方、邀请人、交易哈希</caption>
+        <caption class="sr-only">钱包成交记录：时间、市场、角色、方向、金额、份额、均价、手续费、手续费率、对手方、邀请人、交易哈希</caption>
         <thead>
           <tr>
             <th class="selcol"><input type="checkbox" id="selAll" title="全选 / 全不选" /></th>
@@ -373,11 +375,12 @@
             <th data-col="角色">角色</th><th data-col="方向">方向</th>
             <th data-col="USDT" data-sort="usdt">稳定币 (USDT)</th><th data-col="份额" data-sort="shares">份额</th>
             <th data-col="均价" data-sort="price">均价</th><th data-col="净手续费" data-sort="fee">净手续费</th>
+            <th data-col="手续费率" data-sort="feeRate" title="净手续费 ÷ 份额（退款后实际费率）">手续费率</th>
             <th data-col="对手方">对手方</th><th data-col="邀请人">邀请人</th><th data-col="Tx">Tx</th>
           </tr>
         </thead>
         <tbody id="tbody">
-          <tr><td colspan="12" class="empty">
+          <tr><td colspan="13" class="empty">
             <div style="font-size:15px;color:var(--text);margin-bottom:8px">输入钱包地址开始分析</div>
             推荐先用「⚡ 快速查询」，天数 1–7 天。<br>
             <span class="lnk" id="useExample">使用示例地址体验</span>
@@ -1464,6 +1467,7 @@ function parseReceipt(receipt, wallet){
     usdtOut: 0n,       // 钱包收到的 USDT
     sharesByToken: {}, // tokenId -> 净份额(BigInt)
     netFee: 0n,        // FeeRefunded.feeCharged (to=wallet)
+    refFee: 0n,        // ReferralFeeDistributed.amount 累计（推荐返佣，用于算占实收手续费比例）
     counterparties: new Set(),
     participants: new Set(),
     referrers: new Set(),
@@ -1514,10 +1518,11 @@ function parseReceipt(receipt, wallet){
       }
     }
 
-    // --- ReferralFeeDistributed：邀请人 ---
+    // --- ReferralFeeDistributed：邀请人 + 返佣金额 ---
     else if(t0===T.REFERRAL){
       const referrer = topicToAddr(lg.topics[1]);
       if(referrer) out.referrers.add(referrer);
+      out.refFee += word(lg.data,0);   // 返佣金额（结果 token 单位，与 feeCharged 同单位）
     }
 
     // --- PositionSplit：取 conditionId（用于反查市场） ---
@@ -1583,7 +1588,7 @@ async function run(){
     else if(source==="bsc") items = await listFromBsc(wallet, days, bscKey);
 
     if(items.length===0){
-      tbody.innerHTML = `<tr><td colspan="12" class="empty">该来源未返回交易（换个来源或增大天数试试）</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="13" class="empty">该来源未返回交易（换个来源或增大天数试试）</td></tr>`;
       return;
     }
     // 按时间倒序
@@ -1591,7 +1596,7 @@ async function run(){
     log(`共 ${items.length} 笔，开始${enrich==="none"?"展示":"解析 receipt"}…`);
 
     // 2) 解析 receipt（并行；RPC 10 路 / BSC API 3 路 / 不解析 直接渲染）
-    let totUsdtIn=0n, totUsdtOut=0n, totFee=0n;
+    let totUsdtIn=0n, totUsdtOut=0n, totFee=0n, totRefFee=0n, totShares=0;
     const refSet = new Set(), cpSet = new Set();
     let done=0;
     const enrichJobs = [];   // 收集每行「用户名补全」promise，确保用户名先显示再解析邀请人
@@ -1617,6 +1622,8 @@ async function run(){
         totUsdtIn += parsed.usdtIn; totUsdtOut += parsed.usdtOut; totFee += parsed.netFee;
         parsed.counterparties.forEach(c=>cpSet.add(c));
         parsed.walletReferrers.forEach(r=>refSet.add(r));
+        if(parsed._walletHasFee && parsed.refFee>0n)           // 本钱包实付费时的返佣额，用于算返佣占比
+          totRefFee += (parsed.refFee<=parsed.netFee ? parsed.refFee : parsed.netFee); // 与行内同款上限保护
       }
       // 列表自带对手方也计入汇总（receipt 扫不到时的兜底，与行内展示保持一致）
       if(it.counterparty){
@@ -1624,6 +1631,7 @@ async function run(){
         if(lc!==wallet.toLowerCase() && !EXCHANGES.has(lc)) cpSet.add(lc);
       }
       const tr = renderRow(it, parsed, wallet);
+      if(tr._rec && tr._rec.shares) totShares += tr._rec.shares;   // 累计份额，供汇总算平均手续费率
       tbody.appendChild(tr);
       RESULTS.push(tr);
       enrichJobs.push(enrichRow(tr, parsed)); // 异步补用户名 / 市场名（Predict GraphQL）
@@ -1650,6 +1658,8 @@ async function run(){
       <div class="stat"><b>${fmt(totUsdtIn,18,2)}</b><span>付出 USDT</span></div>
       <div class="stat"><b>${fmt(totUsdtOut,18,2)}</b><span>收到 USDT</span></div>
       <div class="stat"><b>${fmt(totFee,18,4)}</b><span>净手续费 USDT</span></div>
+      <div class="stat"><b>${totShares>0 ? (toNum(totFee)/totShares*100).toFixed(2)+"%" : "—"}</b><span>平均手续费率</span></div>
+      <div class="stat"><b>${toNum(totFee)>0 && totRefFee>0n ? (toNum(totRefFee)/toNum(totFee)*100).toFixed(1)+"%" : "—"}</b><span>推荐返佣占比</span></div>
       <div class="stat"><b>${cpSet.size}</b><span>对手方地址</span></div>
       <div class="stat"><b>${refSet.size}</b><span>本钱包邀请人</span></div>
     `;
@@ -1663,7 +1673,7 @@ async function run(){
     setStatus("出错");
     showActionError(e.message);
     if(tbody.children.length===0)
-      tbody.innerHTML = `<tr><td colspan="12" class="empty err">${e.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="13" class="empty err">${e.message}</td></tr>`;
   }finally{
     $("go").disabled = false; $("stop").disabled = true;
     setProgress(0, 0);
@@ -1756,11 +1766,12 @@ function renderRow(it, p, wallet){
   // 供筛选/排序/导出用的结构化记录
   const rec = { ts:it.ts||0, time, market:fullMarket, role:"", dir:"",
     usdt:null, shares:null, price: it.avg_price?Number(it.avg_price):null, fee:null,
+    feeRate:null, refShare:null,
     counterparties:[], referrers:[], tx:it.tx_hash };
 
   // 方向 & 份额 & 均价（从 receipt 推断）
   let dir="—", sharesTxt="—", priceTxt = it.avg_price ? Number(it.avg_price).toFixed(4) : "—";
-  let usdtTxt="—", feeTxt="—", roleTxt="—";
+  let usdtTxt="—", feeTxt="—", roleTxt="—", feeRateTxt="—";
   let tokenHint = "";
   let cpHtml = it.counterparty ? addrCell((""+it.counterparty).toLowerCase()) : "—";
   let refHtml = "—";
@@ -1787,6 +1798,13 @@ function renderRow(it, p, wallet){
     const netUsdt = p.usdtIn>0n ? p.usdtIn : p.usdtOut;
     usdtTxt = fmt(netUsdt,18,4); rec.usdt = toNum(netUsdt);
     feeTxt = fmt(p.netFee,18,6); rec.fee = toNum(p.netFee);
+    // 手续费率 = 净手续费 / 份额（退款后实际费率，例：3.6/200 = 1.8%）
+    if(rec.fee!=null && rec.shares) rec.feeRate = rec.fee/rec.shares;
+    // 推荐返佣占实收手续费比例（仅本钱包实际付费时有意义，例：0.72/3.6 = 20%）
+    if(p._walletHasFee && p.refFee>0n && p.netFee>0n){
+      const rf = toNum(p.refFee), nf = toNum(p.netFee);
+      if(rf>0 && nf>0 && rf<=nf*1.0001) rec.refShare = Math.min(rf/nf, 1);
+    }
     // 对手方 = 链上 receipt 扫到的参与者 ∪ 交易列表(OPinX)自带的对手方。
     // predict.fun 每笔订单是各自与撮合合约(Exchange)结算的，同一 tx 的 receipt 里
     // 往往只有「本钱包 + Exchange」，扫不到真正对手方；此时不能用空结果把列表已给的对手方覆盖成「—」。
@@ -1817,7 +1835,15 @@ function renderRow(it, p, wallet){
     if(rec.price==null && it.avg_price!=null){ const pr=sNum(it.avg_price); if(pr!=null) rec.price=pr; }
     // 价没份额时，若有 usdt 与 shares 可算
     if((priceTxt==="—") && rec.usdt!=null && rec.shares){ priceTxt=(rec.usdt/rec.shares).toFixed(4); rec.price=rec.usdt/rec.shares; }
+    // 快速模式也算手续费率（来源自带 fee/shares 时）
+    if(rec.feeRate==null && rec.fee!=null && rec.shares) rec.feeRate = rec.fee/rec.shares;
   }
+  // 比例计算：手续费率、均价隐含概率、推荐返佣占比（供表格直接显示）
+  if(rec.feeRate!=null) feeRateTxt = (rec.feeRate*100).toFixed(2)+"%";
+  const priceHint = (rec.price!=null && rec.price>0 && rec.price<=1.5)
+    ? `<div class="hint" title="隐含概率 = 均价 × 100%">${(rec.price*100).toFixed(1)}%</div>` : "";
+  const refShareHint = (rec.refShare!=null)
+    ? `<div class="hint" title="推荐返佣占实收手续费比例">推荐 ${(rec.refShare*100).toFixed(1)}%</div>` : "";
   tr._rec = rec;
   // 市场名/链接：优先用来源(OPinX/官方)已带的 title+slug，直接出链接；
   // 没有 title 时留 .mkt 占位，由 enrichRow 用 conditionId 走 GraphQL 索引补。
@@ -1841,8 +1867,9 @@ function renderRow(it, p, wallet){
     <td data-label="方向">${dir}</td>
     <td class="num" data-label="USDT">${usdtTxt}</td>
     <td class="num" data-label="份额">${sharesTxt}</td>
-    <td class="num" data-label="均价">${priceTxt}</td>
-    <td class="num" data-label="净手续费">${feeTxt}</td>
+    <td class="num" data-label="均价">${priceTxt}${priceHint}</td>
+    <td class="num" data-label="净手续费">${feeTxt}${refShareHint}</td>
+    <td class="num" data-label="手续费率">${feeRateTxt}</td>
     <td data-label="对手方">${cpHtml}</td>
     <td data-label="邀请人">${refHtml}</td>
     <td data-label="Tx"><a href="https://bscscan.com/tx/${tx}" target="_blank">${short(tx)}↗</a></td>
@@ -2095,6 +2122,7 @@ const HIDEABLE_COLS = [
   {label:"份额", empty:r=>r.shares==null},
   {label:"均价", empty:r=>r.price==null},
   {label:"净手续费", empty:r=>r.fee==null},
+  {label:"手续费率", empty:r=>r.feeRate==null},
   {label:"邀请人", empty:r=>!(r.referrers&&r.referrers.length)},
 ];
 function setColVisible(label, visible){
@@ -2270,6 +2298,7 @@ function renderDedupRows(visible){
       + `<td class="num" data-label="份额">${m.shares.toLocaleString(undefined,{maximumFractionDigits:2})}</td>`
       + `<td class="num" data-label="均价">—</td>`
       + `<td class="num" data-label="净手续费">${m.fee.toLocaleString(undefined,{maximumFractionDigits:4})}</td>`
+      + `<td class="num" data-label="手续费率">${m.shares?(m.fee/m.shares*100).toFixed(2)+"%":"—"}</td>`
       + `<td data-label="对手方">${addrCell(m.addr)}</td>`
       + `<td data-label="邀请人">—</td>`
       + `<td data-label="Tx"><b>${m.count}</b> 笔</td>`;
@@ -2310,10 +2339,11 @@ $("transTitles").addEventListener("change", ()=>{ LS.set("trans", $("transTitles
 ["transUrl","transDict"].forEach(id=> $(id).addEventListener("change", ()=>{ LS.set(id, $(id).value); if($("transTitles").checked) applyTitleTranslation(true); }));
 document.querySelectorAll("th[data-sort]").forEach(th=> th.addEventListener("click", ()=>setSort(th.getAttribute("data-sort"))));
 function exportCsv(){
-  const head = ["时间","市场","角色","方向","USDT","份额","均价","净手续费","对手方","邀请人","Tx"];
+  const head = ["时间","市场","角色","方向","USDT","份额","均价","净手续费","手续费率","推荐返佣占比","对手方","邀请人","Tx"];
+  const pct = v => v==null ? "" : (v*100).toFixed(2)+"%";
   const rows = RESULTS.filter(tr=>tr.style.display!=="none").map(tr=>{
     const r = tr._rec||{};
-    return [r.time, r.market, r.role, r.dir, r.usdt, r.shares, r.price, r.fee,
+    return [r.time, r.market, r.role, r.dir, r.usdt, r.shares, r.price, r.fee, pct(r.feeRate), pct(r.refShare),
       (r.counterparties||[]).join("|"), (r.referrers||[]).join("|"), r.tx];
   });
   const esc = v => { const s = v==null?"":String(v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
