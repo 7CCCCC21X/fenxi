@@ -425,7 +425,6 @@
       <textarea id="refAddr" rows="2" placeholder="0x… 钱包 / 邀请人地址；支持批量：每行一个，或用空格 / 逗号分隔" style="width:100%;resize:vertical"></textarea>
       <div class="row" style="gap:10px;margin-top:10px">
         <input id="refDays" type="number" value="30" min="1" max="366" title="回溯天数（默认近 1 个月）" style="width:110px" />
-        <label class="chk" title="从最新往回扫，遇连续空段即停；更快，但可能漏掉更早的记录"><input type="checkbox" id="refFast" checked /> 快速模式</label>
         <button id="refUp" class="secondary">查邀请人 ↑</button>
         <button id="refDown">查下线 ↓</button>
       </div>
@@ -1187,6 +1186,71 @@ async function scanLogsRange(topics, fromBlock, toBlock, onProgress, address, op
   return out;
 }
 
+const LOGS_CONC = 6; // 分窗扫描的并发路数
+// 稀疏 topic 扫描：topic1/2 已锁定具体地址时命中很少。先「整段一击」（宽容节点直接返回，零分窗）；
+// 失败（区间过大被拒）再把范围切成固定窗口**并发**拉取。相比 scanLogsRange 顺序分窗 + sleep，大区间快得多。
+async function scanLogsSparse(topics, fromBlock, toBlock, address, onProgress){
+  if(toBlock < fromBlock) return [];
+  try{ return await getLogsWindow(topics, fromBlock, toBlock, address); } // 一击命中
+  catch(e){ if(!isRangeErr(e)) throw e; }                                  // 仅区间错误才分窗，其余照抛
+  const W = maxLogWindow();
+  const windows = [];
+  for(let f=fromBlock; f<=toBlock; f+=W) windows.push([f, Math.min(toBlock, f+W-1)]);
+  const out=[]; let done=0;
+  const fetchWin = async (from, to)=>{                                     // 单窗：range 错误则二分重试
+    let size = to - from + 1, cur = from; const res=[];
+    while(cur<=to){
+      if(aborted) return res;
+      const t = Math.min(to, cur + size - 1);
+      try{ res.push(...await getLogsWindow(topics, cur, t, address)); cur = t + 1; }
+      catch(e){ if(isRangeErr(e) && size>1){ size = Math.max(1, Math.floor(size/2)); continue; } throw e; }
+    }
+    return res;
+  };
+  await pMap(windows, async ([f,t])=>{
+    if(aborted) return;
+    let part=[]; try{ part = await fetchWin(f,t); }catch(_){ /* 单窗失败不致命，跳过 */ }
+    out.push(...part);
+    done++; onProgress && onProgress(done, windows.length, out.length);
+  }, LOGS_CONC);
+  return out;
+}
+
+// 批量取 receipt：走 RPC 时用 JSON-RPC 批量请求（一次 HTTP 拿多笔），把 N 次往返压到 N/CHUNK 次。
+// 返回与 txs 等长的数组（缺失/失败为 null）。BSC API（付费）路径不支持批量 → 逐个回退。
+async function getReceiptsBatch(txs, onProgress){
+  const key = currentBscKey();
+  const useApi = _bscApiUsable!==false && ((SERVER.enabled&&SERVER.bsc)||key);
+  let done=0; const tick = n=>{ done+=n; onProgress && onProgress(done, txs.length); };
+  if(useApi || txs.length<=1){
+    const r = await pMap(txs, async tx=>{ const x = await getReceiptAny(tx).catch(()=>null); tick(1); return x; }, RECEIPT_CONC);
+    return r;
+  }
+  const target = rpcTarget(rpcUrlVal());
+  const CHUNK = 20;
+  const chunks = [];
+  for(let i=0;i<txs.length;i+=CHUNK) chunks.push([i, txs.slice(i,i+CHUNK)]);
+  const results = new Array(txs.length).fill(null);
+  await pMap(chunks, async ([base, chunk])=>{
+    if(aborted) return;
+    const body = chunk.map((tx,i)=>({ jsonrpc:"2.0", id:i, method:"eth_getTransactionReceipt", params:[tx] }));
+    try{
+      const arr = await rpcLimit(async ()=>{
+        const { json } = await fetchJSON(target, { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(body) });
+        return json;
+      });
+      if(Array.isArray(arr)){
+        const byId = new Map(arr.map(r=>[r && r.id, r]));
+        chunk.forEach((_,i)=>{ const r=byId.get(i); results[base+i] = r && r.result ? r.result : null; });
+        tick(chunk.length); return;
+      }
+    }catch(_){ /* 批量不被支持/失败 → 逐个回退 */ }
+    const one = await pMap(chunk, tx=>getReceiptAny(tx).catch(()=>null), RECEIPT_CONC);
+    one.forEach((r,i)=> results[base+i] = r); tick(chunk.length);
+  }, LOGS_CONC);
+  return results;
+}
+
 // receipt：优先 BSC API，套餐不支持则 RPC
 async function getReceiptAny(tx){
   const key = currentBscKey();
@@ -1363,14 +1427,12 @@ async function findInvitees(address, days, onProgress){
   const tip = await blockTip();
   const fromBlock = await blockFromTime(Math.floor(Date.now()/1000) - days*86400);
   const topics = [T.REFERRAL, padTopic(address)];
-  const fast = !!(document.getElementById("refFast") && document.getElementById("refFast").checked);
-  const opts = { backward:fast, emptyStop:2 };
   // 只按 topic 过滤（topic0=ReferralFeeDistributed, topic1=推荐人），不再限定手续费合约地址：
   // EXCHANGES 有 4 个交易所（收益型 2 + 非收益型 2），而 FEE_MODULES 只列了收益型对应的 2 个手续费合约，
   // 若只扫这两个，非收益型市场产生的返佣就永远扫不到 → 查下线返回空。topic1 已锁定具体推荐人，命中集很小。
-  const logs = await scanLogsRange(topics, fromBlock, tip,
-    (d,t,n)=>onProgress && onProgress("扫描日志", d, t, n), null, opts);
-  const stopped = !!opts.stopped;
+  // scanLogsSparse：整段一击 / 失败再并发分窗，比顺序分窗快很多，且不再需要「快速模式」提前停止。
+  const logs = await scanLogsSparse(topics, fromBlock, tip, null,
+    (d,t,n)=>onProgress && onProgress("扫描日志", d, t, n));
   // 每笔 tx 记录该推荐人对应的 takerFeeTokenId（indexed topic2），用于在 receipt 里精确匹配被邀请人
   const txTokens = new Map();  // txLower -> Set(tokenIdDec)
   for(const l of logs){
@@ -1380,13 +1442,15 @@ async function findInvitees(address, days, onProgress){
   }
   const txs = [...txTokens.keys()];
   const cap=400; const slice = txs.slice(0, cap);
+  // 批量拉 receipt（RPC 走 JSON-RPC batch，往返数骤减），再本地解析被邀请人
+  const receipts = await getReceiptsBatch(slice, (d,t)=>onProgress && onProgress("拉取回执", d, t, 0));
   const invitees = new Map(); let done=0;
-  await pMap(slice, async tx=>{
-    const u = inviteeFromReceipt(await getReceiptAny(tx), txTokens.get(tx));
-    if(u){ const cur = invitees.get(u)||{count:0}; cur.count++; invitees.set(u, cur); } // get/set 同步、无竞态
+  slice.forEach((tx,i)=>{
+    const u = inviteeFromReceipt(receipts[i], txTokens.get(tx));
+    if(u){ const cur = invitees.get(u)||{count:0}; cur.count++; invitees.set(u, cur); }
     done++; onProgress && onProgress("解析返佣", done, slice.length, invitees.size);
-  }, RECEIPT_CONC);
-  return { invitees, scanned:done, total:txs.length, capped: txs.length>cap, earlyStopped:stopped };
+  });
+  return { invitees, scanned:done, total:txs.length, capped: txs.length>cap, earlyStopped:false };
 }
 
 /* =====================================================================
