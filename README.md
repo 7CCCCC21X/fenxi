@@ -6,6 +6,11 @@
 - 链上解析：Etherscan V2（`chainid=56` = BSC）receipt 或 BSC RPC。
 - 对手方 = 同一 tx 内 `OrderFilled` 的 maker/taker，剔除本钱包与 Exchange 合约。
 - 邀请人 = `ReferralFeeDistributed.referrer`；当同 tx `FeeRefunded.to==本钱包` 且 `feeCharged>0` 时标「本钱包」。
+- 比例计算（查询时自动算）：
+  - **手续费率** = 净手续费 ÷ 份额（退款后实际费率，如 `3.6/200 = 1.8%`），成交表新增该列，可排序/导出。
+  - **隐含概率** = 均价 × 100%（如 `0.701 → 70.1%`），显示在均价单元格下方小字。
+  - **推荐返佣占比** = `ReferralFeeDistributed` 返佣额 ÷ 实收手续费（如 `0.72/3.6 = 20%`），仅本钱包实付费时显示在净手续费单元格下方，并在汇总卡片给出整体占比。
+  - 汇总卡片另给「平均手续费率」= 累计净手续费 ÷ 累计份额。
 
 ## 部署到 Vercel
 
