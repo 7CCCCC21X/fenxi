@@ -1464,6 +1464,11 @@ async function run(){
         parsed.counterparties.forEach(c=>cpSet.add(c));
         parsed.walletReferrers.forEach(r=>refSet.add(r));
       }
+      // 列表自带对手方也计入汇总（receipt 扫不到时的兜底，与行内展示保持一致）
+      if(it.counterparty){
+        const lc = (""+it.counterparty).toLowerCase();
+        if(lc!==wallet.toLowerCase() && !EXCHANGES.has(lc)) cpSet.add(lc);
+      }
       const tr = renderRow(it, parsed, wallet);
       tbody.appendChild(tr);
       RESULTS.push(tr);
@@ -1628,9 +1633,15 @@ function renderRow(it, p, wallet){
     const netUsdt = p.usdtIn>0n ? p.usdtIn : p.usdtOut;
     usdtTxt = fmt(netUsdt,18,4); rec.usdt = toNum(netUsdt);
     feeTxt = fmt(p.netFee,18,6); rec.fee = toNum(p.netFee);
-    rec.counterparties = [...p.counterparties];
-    cpHtml = p.counterparties.size
-      ? [...p.counterparties].map(c=>addrCell(c)).join("<br>") : "—";
+    // 对手方 = 链上 receipt 扫到的参与者 ∪ 交易列表(OPinX)自带的对手方。
+    // predict.fun 每笔订单是各自与撮合合约(Exchange)结算的，同一 tx 的 receipt 里
+    // 往往只有「本钱包 + Exchange」，扫不到真正对手方；此时不能用空结果把列表已给的对手方覆盖成「—」。
+    const cpMerged = new Set([...p.counterparties]);
+    const listCp = it.counterparty ? (""+it.counterparty).toLowerCase() : "";
+    if(listCp && listCp!==wallet.toLowerCase() && !EXCHANGES.has(listCp)) cpMerged.add(listCp);
+    rec.counterparties = [...cpMerged];
+    cpHtml = cpMerged.size
+      ? [...cpMerged].map(c=>addrCell(c)).join("<br>") : "—";
     if(p.referrers.size){
       rec.referrers = [...p.referrers];
       refHtml = [...p.referrers].map(r=>{
