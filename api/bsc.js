@@ -21,13 +21,18 @@ export default async function handler(req, res) {
   if (IS_V2) u.searchParams.set("chainid", "56"); // 仅 Etherscan V2 需要 chainid
   u.searchParams.set("apikey", key);
 
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
   try {
-    const r = await fetch(u.toString());
+    const r = await fetch(u.toString(), { signal: ctrl.signal });
     const text = await r.text();
     res.setHeader("content-type", "application/json; charset=utf-8");
     res.setHeader("cache-control", "no-store");
     res.status(r.status).send(text);
   } catch (e) {
-    res.status(502).json({ error: String(e && e.message || e) });
+    const msg = e && e.name === "AbortError" ? "上游超时（15s）" : String(e && e.message || e);
+    res.status(502).json({ error: msg });
+  } finally {
+    clearTimeout(timer);
   }
 }

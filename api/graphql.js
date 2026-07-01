@@ -15,13 +15,18 @@ export default async function handler(req, res) {
   if (process.env.PREDICT_GRAPHQL_COOKIE) headers["cookie"] = process.env.PREDICT_GRAPHQL_COOKIE;
 
   const body = typeof req.body === "string" ? req.body : JSON.stringify(req.body || {});
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
   try {
-    const r = await fetch(GRAPHQL_URL, { method: "POST", headers, body });
+    const r = await fetch(GRAPHQL_URL, { method: "POST", headers, body, signal: ctrl.signal });
     const text = await r.text();
     res.setHeader("content-type", "application/json; charset=utf-8");
     res.setHeader("cache-control", "no-store");
     res.status(r.status).send(text);
   } catch (e) {
-    res.status(502).json({ error: String(e && e.message || e) });
+    const msg = e && e.name === "AbortError" ? "上游超时（15s）" : String(e && e.message || e);
+    res.status(502).json({ error: msg });
+  } finally {
+    clearTimeout(timer);
   }
 }

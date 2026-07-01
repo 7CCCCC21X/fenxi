@@ -10,13 +10,18 @@ export default async function handler(req, res) {
     ? tpl.replace("{q}", encodeURIComponent(q)).replace("{tl}", encodeURIComponent(tl))
     : `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(q)}`;
 
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
   try {
-    const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" } });
+    const r = await fetch(url, { signal: ctrl.signal, headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" } });
     const text = await r.text();
     res.setHeader("content-type", "application/json; charset=utf-8");
     res.setHeader("cache-control", "public, max-age=86400");
     res.status(r.status).send(text);
   } catch (e) {
-    res.status(502).json({ error: String(e && e.message || e) });
+    const msg = e && e.name === "AbortError" ? "翻译上游超时（15s）" : String(e && e.message || e);
+    res.status(502).json({ error: msg });
+  } finally {
+    clearTimeout(timer);
   }
 }

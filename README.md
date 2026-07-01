@@ -39,7 +39,7 @@
 - `GET /api/bsc` — Etherscan V2 代理（强制 `chainid=56` + 注入 key）。
 - `GET /api/opinx` — 代理 predalpha indexer，并带 `Origin: predalpha.xyz`，绕过其来源校验（浏览器 `fetch` 无法伪造该头，这也是直连常 404 的原因）。
 - `GET /api/predict` — 代理 Predict.fun，注入 `x-api-key`。
-- `POST /api/rpc` — 代理 BSC RPC（`BSC_RPC_URL`）。
+- `POST /api/rpc` — 代理 BSC RPC（`BSC_RPC_URL`）。**只放行只读方法**（`eth_getLogs`/`eth_getTransactionReceipt`/`eth_blockNumber`/`eth_getBlockByNumber` 等），**支持 JSON-RPC 批量数组**（前端批量拉 receipt 用），限制批量条数并加超时，避免私有 RPC 沦为开放代理。
 - `POST /api/graphql` — 代理 Predict.fun GraphQL（带 Origin/Referer），解析**对手方/邀请人用户名**（`account(address).name`）、**市场名/网站**（`market(id).slug`）、以及**积分/持仓/PNL/排名**（`leaderboard.totalPoints`/`statistics.positionsValueUsd`/`pnlUsd`）。地址自动转 EIP-55 校验和（小写会返回 null）。
 - `GET /api/opinx-points` — 代理 predalpha indexer 积分接口 `…/api/predict/points/{wallet}`（免 Key）。
 
@@ -58,7 +58,9 @@
 
 ## 本地使用
 
-直接用浏览器打开 `predict_fun_trade_viewer.html`（或 `index.html`），在页面手填 API Key 即可（本地没有 `/api` 代理）。
+直接用浏览器打开 `index.html`，在页面手填 API Key 即可（本地没有 `/api` 代理）。
+
+> `predict_fun_trade_viewer.html` 原为 `index.html` 的完整副本，现已改为重定向页（只维护 `index.html` 一个入口），打开它会自动跳到 `index.html`。
 
 ## 关于 `api.etherscan.io` 查的是 BSC
 

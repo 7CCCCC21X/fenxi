@@ -8,8 +8,11 @@ export default async function handler(req, res) {
     u.searchParams.set(k, Array.isArray(v) ? v[0] : String(v));
   }
 
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
   try {
     const r = await fetch(u.toString(), {
+      signal: ctrl.signal,
       headers: { "x-api-key": key, "Accept": "application/json" },
     });
     const text = await r.text();
@@ -17,6 +20,9 @@ export default async function handler(req, res) {
     res.setHeader("cache-control", "no-store");
     res.status(r.status).send(text);
   } catch (e) {
-    res.status(502).json({ error: String(e && e.message || e) });
+    const msg = e && e.name === "AbortError" ? "上游超时（15s）" : String(e && e.message || e);
+    res.status(502).json({ error: msg });
+  } finally {
+    clearTimeout(timer);
   }
 }
