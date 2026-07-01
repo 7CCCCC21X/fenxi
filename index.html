@@ -206,6 +206,10 @@
     table#resultTable td[data-label="时间"]{font-weight:700;border-bottom:1px solid var(--border);padding-bottom:7px;margin-bottom:4px}
     .scroll{max-height:none;border:none}
   }
+  /* 地址备注 / 标签 chip */
+  .alabel{cursor:pointer;margin-left:6px;font-size:11px;line-height:1.6;padding:0 6px;border-radius:10px;border:1px dashed var(--border);color:var(--faint);opacity:.45;white-space:nowrap;user-select:none;transition:opacity .12s}
+  .alabel:hover{opacity:1}
+  .alabel.set{opacity:1;border-style:solid;border-color:rgba(77,141,255,.5);background:rgba(77,141,255,.12);color:var(--text)}
 </style>
 </head>
 <body>
@@ -595,17 +599,38 @@ async function gql(query, variables){
     }
   });
 }
-const _acctCache = new Map();   // addr -> Promise<{name,referralCode}|null>
+// 持久 TTL 缓存：只存「正向」结果（有用户名 / 有市场名），localStorage 落盘、跨刷新复用。
+// 绝不缓存 null/失败——与「每次查询清空内存负缓存」的思路一致，避免把可解析的地址永久钉成空白。
+function makeTTLCache(nsKey, ttlMs){
+  let store = {};
+  try{ const s=localStorage.getItem(nsKey); if(s) store = JSON.parse(s) || {}; }catch(_){}
+  let dirty=false, timer=null;
+  const flush=()=>{ timer=null; if(!dirty) return; dirty=false; try{ localStorage.setItem(nsKey, JSON.stringify(store)); }catch(_){} };
+  const schedule=()=>{ dirty=true; if(!timer) timer=setTimeout(flush, 500); };
+  return {
+    get(k){ const e=store[k]; if(!e) return undefined; if(Date.now()-e.ts>ttlMs){ delete store[k]; schedule(); return undefined; } return e.v; },
+    set(k,v){ if(v==null) return; store[k]={ v, ts:Date.now() }; schedule(); },
+    clear(){ store={}; try{ localStorage.removeItem(nsKey); }catch(_){} },
+  };
+}
+const _acctLS = makeTTLCache("pf.acctcache_v1", 7*24*3600*1000);    // 用户名：7 天
+const _mktLS  = makeTTLCache("pf.mktcache_v1", 30*24*3600*1000);    // 市场名：30 天
+
+const _acctCache = new Map();   // addr -> Promise<{name,referralCode}|null>（内存，每次查询清空）
 function resolveAccount(addr){
   if(!addr) return Promise.resolve(null);
   const key = addr.toLowerCase();
-  if(_acctCache.has(key)) return _acctCache.get(key);
+  if(_acctCache.has(key)) return _acctCache.get(key);   // 同次查询内去重：相同地址复用同一 Promise
+  const hit = _acctLS.get(key);                          // 持久命中（仅存过「有用户名」的正向结果）
+  if(hit){ const p = Promise.resolve(hit); _acctCache.set(key, p); return p; }
   const p = gql(`query A($a:Address!){account(address:$a){name referralCode}}`, { a: toChecksum(addr) })
     .then(j => {
       // 仅在拿到「权威响应」时缓存：代理不可用(null)、GraphQL 报错(errors)、或无 data 字段，
       // 都属于瞬时/服务端失败，删除缓存以便该地址下次再现时重试，避免用户名被永久钉成空白。
       if(!j || j.errors || !j.data){ _acctCache.delete(key); return null; }
-      return j.data.account || null;   // 有效响应（即使该账号无用户名）才缓存
+      const acct = j.data.account || null;   // 有效响应（即使该账号无用户名）才缓存到内存
+      if(acct && acct.name) _acctLS.set(key, acct);   // 只把「有用户名」的正向结果落盘持久化
+      return acct;
     })
     .catch(()=>{ _acctCache.delete(key); return null; });
   _acctCache.set(key, p);
@@ -687,11 +712,15 @@ function resolveMarket(conditionId){
   const id = conditionId.startsWith("0x") ? conditionId : "0x"+conditionId;
   const key = id.toLowerCase();
   if(_mktCache.has(key)) return _mktCache.get(key);
+  const hit = _mktLS.get(key);                          // 持久命中：跳过整份市场索引构建（省去数千条 GraphQL 拉取）
+  if(hit){ const p = Promise.resolve(hit); _mktCache.set(key, p); return p; }
   const p = buildMarketIndex()
     .then(idx => {
       const m = idx.get(key);
       if(!m) return null;
-      return { title:m.title, url: marketUrl(m.slug, m.id) };
+      const out = { title:m.title, url: marketUrl(m.slug, m.id) };
+      _mktLS.set(key, out);                              // 市场名/网址落盘
+      return out;
     })
     .catch(()=>null);
   _mktCache.set(key, p);
@@ -1734,13 +1763,44 @@ function showActionError(msg){
  * 渲染一行
  * ===================================================================== */
 function portfolioUrl(a){ return `https://predict.fun/zh-cn/portfolio/${a}`; }
+
+/* —— 地址备注 / 标签（本地存储；表格显示 + 导出，纯前端不联网）—— */
+const LABELS_KEY = "pf.labels_v1";
+let _labels = {};
+try{ const s=localStorage.getItem(LABELS_KEY); if(s) _labels = JSON.parse(s)||{}; }catch(_){}
+function labelOf(a){ return a ? (_labels[String(a).toLowerCase()]||"") : ""; }
+function saveLabels(){ try{ localStorage.setItem(LABELS_KEY, JSON.stringify(_labels)); }catch(_){} }
+// 给页面上匹配的 .alabel chip 填当前备注（scope 限容器；onlyAddr 限单地址，同址多行时全刷新）
+function paintLabels(scope, onlyAddr){
+  (scope||document).querySelectorAll(".alabel[data-addr]").forEach(el=>{
+    const a = (el.getAttribute("data-addr")||"").toLowerCase();
+    if(onlyAddr && a!==onlyAddr) return;
+    const t = labelOf(a);
+    el.textContent = t ? ("🏷 "+t) : "🏷";
+    el.classList.toggle("set", !!t);
+    el.title = t ? `备注：${t}（点击修改）` : "点击加备注/标签";
+  });
+}
+const fillLabels = scope => paintLabels(scope);
+function setLabel(a, text){
+  const k=String(a).toLowerCase(); text=(text||"").trim().slice(0,60);
+  if(text) _labels[k]=text; else delete _labels[k];
+  saveLabels(); paintLabels(document, k);
+}
+function editLabel(a){
+  const t = prompt(`给地址加备注 / 标签（留空删除）\n${a}`, labelOf(a));
+  if(t!==null) setLabel(a, t);
+}
+const labelChip = a => `<span class="alabel" data-addr="${a}" role="button" onclick="editLabel('${a}')">🏷</span>`;
+
 function addrCell(a, cls){
   if(!a) return "—";
-  // 地址 → 跳 Predict portfolio；.uname 占位（@用户名，可点击查积分）；⧉ 复制；.cpref 占位（对手方邀请人）
+  // 地址 → 跳 Predict portfolio；.uname 占位（@用户名，可点击查积分）；⧉ 复制；🏷 备注；.cpref 占位（对手方邀请人）
   return `<span class="person" data-addr="${a}">`
        + `<a class="addr ${cls||''}" href="${portfolioUrl(a)}" target="_blank" title="打开 Predict portfolio">${short(a)}</a>`
        + `<span class="uname" data-addr="${a}" title="点击查询积分"></span>`
        + `<span class="copy" role="button" aria-label="复制地址" onclick="copy('${a}')">⧉</span>`
+       + labelChip(a)
        + `<span class="cpref"></span></span>`;
 }
 function renderRow(it, p, wallet){
@@ -1847,6 +1907,7 @@ function renderRow(it, p, wallet){
     <td data-label="邀请人">${refHtml}</td>
     <td data-label="Tx"><a href="https://bscscan.com/tx/${tx}" target="_blank">${short(tx)}↗</a></td>
   `;
+  fillLabels(tr);   // 填地址备注 chip（本地、同步）
   return tr;
 }
 
@@ -1911,14 +1972,16 @@ async function queryPoints(address){
 function personHtml(addr, extra){
   return `<a class="addr" href="${portfolioUrl(addr)}" target="_blank">${short(addr)}</a>`
        + `<span class="uname ref-uname" data-addr="${addr}"></span>`
-       + `<span class="copy" onclick="copy('${addr}')">⧉</span>` + (extra||"");
+       + `<span class="copy" onclick="copy('${addr}')">⧉</span>`
+       + labelChip(addr) + (extra||"");
 }
-// 给容器内所有 .ref-uname 填用户名
+// 给容器内所有 .ref-uname 填用户名（并刷新地址备注 chip）
 function fillRefNames(container){
   container.querySelectorAll(".ref-uname[data-addr]").forEach(async el=>{
     const acct = await resolveAccount(el.getAttribute("data-addr"));
     if(acct && acct.name){ el.textContent = " @"+acct.name; el.setAttribute("data-name", acct.name); }
   });
+  fillLabels(container);
 }
 const parseAddrs = s => [...new Set((String(s).match(/0x[a-fA-F0-9]{40}/g)||[]).map(x=>x.toLowerCase()))];
 function refDaysVal(){ return Math.max(1, Number($("refDays").value)||30); }
@@ -2039,9 +2102,10 @@ $("refHistFill").addEventListener("click", ()=>{
   $("refAddr").scrollIntoView({ behavior:"smooth", block:"center" });
 });
 $("refHistClear").addEventListener("click", ()=>{
-  if(!_refStore.size) return;
-  if(!confirm(`确定清空 ${_refStore.size} 条邀请人查询缓存/历史？`)) return;
-  _refStore = new Map(); saveRefStore(); renderRefHist(); toast("已清空查询历史");
+  if(!confirm(`确定清空本地缓存？（${_refStore.size} 条邀请人查询历史，以及用户名/市场名缓存）`)) return;
+  _refStore = new Map(); saveRefStore(); renderRefHist();
+  _acctLS.clear(); _mktLS.clear(); _acctCache.clear(); _mktCache.clear();   // 一并清掉用户名/市场名缓存
+  toast("已清空查询历史与名称缓存");
 });
 $("refHistToggle").addEventListener("click", ()=>{
   const collapsed = LS.get("refHistCollapsed","1")==="1";
@@ -2148,7 +2212,8 @@ function applyTableView(){
     if(ok && fFrom && (r.ts||0) < fFrom) ok=false;
     if(ok && fTo && (r.ts||0) > fTo) ok=false;
     if(ok && q){
-      const hay = [r.market, r.tx, ...(r.counterparties||[]), ...(r.referrers||[])].join(" ").toLowerCase();
+      const addrs = [...(r.counterparties||[]), ...(r.referrers||[])];
+      const hay = [r.market, r.tx, ...addrs, ...addrs.map(labelOf)].join(" ").toLowerCase();
       if(!hay.includes(q)) ok=false;
     }
     tr.style.display = ok ? "" : "none";
@@ -2310,11 +2375,13 @@ $("transTitles").addEventListener("change", ()=>{ LS.set("trans", $("transTitles
 ["transUrl","transDict"].forEach(id=> $(id).addEventListener("change", ()=>{ LS.set(id, $(id).value); if($("transTitles").checked) applyTitleTranslation(true); }));
 document.querySelectorAll("th[data-sort]").forEach(th=> th.addEventListener("click", ()=>setSort(th.getAttribute("data-sort"))));
 function exportCsv(){
-  const head = ["时间","市场","角色","方向","USDT","份额","均价","净手续费","对手方","邀请人","Tx"];
+  const head = ["时间","市场","角色","方向","USDT","份额","均价","净手续费","对手方","邀请人","Tx","备注"];
+  const labelsFor = arr => (arr||[]).map(a=>labelOf(a)?`${short(a)}=${labelOf(a)}`:"").filter(Boolean).join("|");
   const rows = RESULTS.filter(tr=>tr.style.display!=="none").map(tr=>{
     const r = tr._rec||{};
     return [r.time, r.market, r.role, r.dir, r.usdt, r.shares, r.price, r.fee,
-      (r.counterparties||[]).join("|"), (r.referrers||[]).join("|"), r.tx];
+      (r.counterparties||[]).join("|"), (r.referrers||[]).join("|"), r.tx,
+      labelsFor([...(r.counterparties||[]), ...(r.referrers||[])])];
   });
   const esc = v => { const s = v==null?"":String(v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
   const csv = "﻿" + [head, ...rows].map(r=>r.map(esc).join(",")).join("\r\n");
