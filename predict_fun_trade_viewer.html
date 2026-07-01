@@ -842,9 +842,50 @@ function opinxTrade(t, w){
     avg_price: shares>0 ? usdt/shares : null,
   };
 }
-// OPinX：/api/predict/trades/{wallet}/history（分页 + 时间范围），相对 wallet 解析
+// 从 JSON 响应里取出交易数组：兼容 trades / data / orders / history / 顶层数组 / 任意数组值
+function pickTradesArray(json){
+  if(Array.isArray(json)) return json;
+  if(!json || typeof json!=="object") return null;
+  return json.trades || json.data || json.orders || json.history
+      || Object.values(json).find(v=>Array.isArray(v)) || null;
+}
+// 把一批原始成交按 tx 合并进 items（同一 tx 多笔 fill 累加，相对 wallet 解析）
+function mergeOpinxTrades(items, rows, w){
+  for(const t of rows){
+    const it = opinxTrade(t, w);
+    if(!it.tx_hash) continue;
+    const k = it.tx_hash.toLowerCase();
+    const prev = items.get(k);
+    if(prev){ // 同一 tx 多笔 fill → 累加金额
+      prev.usdt += it.usdt; prev.shares += it.shares; prev.fee += it.fee;
+      prev.avg_price = prev.shares>0 ? prev.usdt/prev.shares : prev.avg_price;
+      if(!prev.counterparty && it.counterparty) prev.counterparty = it.counterparty;
+    } else items.set(k, it);
+  }
+}
+// OPinX 成交列表：新接口 /orders/{wallet}?days=N 优先，失败/空则回退旧的 /trades/{wallet}/history（分页）
 async function listFromOpinx(wallet, days, base){
   const w = wallet.toLowerCase();
+  // ① 新接口优先：/api/predict/orders/{wallet}?days=N（单次、免分页）
+  try{
+    const ordersBase = (base && /orders/.test(base)) ? base : "https://indexer.predalpha.xyz/api/predict/orders";
+    const url = SERVER.enabled
+      ? `/api/opinx?wallet=${wallet}&days=${days}`
+      : `${ordersBase.replace(/\/$/,"")}/${wallet}?days=${days}`;
+    const { ok, status, json, text } = await fetchJSON(url);
+    if(ok && json){
+      const rows = pickTradesArray(json);
+      if(Array.isArray(rows)){
+        const items = new Map();
+        mergeOpinxTrades(items, rows, w);
+        setStatus(`① 拉取交易列表…（${items.size}）`);
+        if(items.size){ log(`OPinX /orders 命中 ${items.size} 笔 tx`); return [...items.values()]; }
+        log("OPinX /orders 返回 0 笔，回退 /trades/history 再试");
+      } else log("OPinX /orders 响应无交易数组，回退 /trades/history");
+    } else log(`OPinX /orders 不可用（HTTP ${status}${text?(" | "+text.slice(0,80)):""}），回退 /trades/history`);
+  }catch(e){ log(`OPinX /orders 异常（${e.message}），回退 /trades/history`); }
+
+  // ② 回退：旧的分页成交历史接口 /api/predict/trades/{wallet}/history（分页 + 时间范围）
   const end_time = Math.floor(Date.now()/1000);
   const start_time = end_time - days*86400;
   const tradesBase = (base && /trades/.test(base)) ? base : "https://indexer.predalpha.xyz/api/predict/trades";
@@ -862,21 +903,11 @@ async function listFromOpinx(wallet, days, base){
                : status===403 ? "（被拒绝，改用「BSC 扫链」来源）" : "";
       throw new Error(`OPinX HTTP ${status}${hint}` + (text?(" | "+text.slice(0,100)):""));
     }
-    const trades = json.trades || json.data || [];
-    for(const t of trades){
-      const it = opinxTrade(t, w);
-      if(!it.tx_hash) continue;
-      const k = it.tx_hash.toLowerCase();
-      const prev = items.get(k);
-      if(prev){ // 同一 tx 多笔 fill → 累加金额
-        prev.usdt += it.usdt; prev.shares += it.shares; prev.fee += it.fee;
-        prev.avg_price = prev.shares>0 ? prev.usdt/prev.shares : prev.avg_price;
-        if(!prev.counterparty && it.counterparty) prev.counterparty = it.counterparty;
-      } else items.set(k, it);
-    }
+    const rows = pickTradesArray(json) || [];
+    mergeOpinxTrades(items, rows, w);
     pages++; offset += limit;
     setStatus(`① 拉取交易列表…（${items.size}）`);
-    if(trades.length < limit) break;
+    if(rows.length < limit) break;
   }
   log(`OPinX 命中 ${items.size} 笔 tx`);
   return [...items.values()];
