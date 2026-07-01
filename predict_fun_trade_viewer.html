@@ -1202,8 +1202,19 @@ function referrerFromReceipt(receipt){
   for(const lg of (receipt&&receipt.logs)||[]) if((lg.topics[0]||"").toLowerCase()===T.REFERRAL) return topicToAddr(lg.topics[1]);
   return null;
 }
-function inviteeFromReceipt(receipt){
-  for(const lg of (receipt&&receipt.logs)||[]) if((lg.topics[0]||"").toLowerCase()===T.FEE_REFUNDED && word(lg.data,2)>0n) return topicToAddr(lg.topics[2]);
+function inviteeFromReceipt(receipt, tokenIds){
+  const logs = (receipt&&receipt.logs)||[];
+  // 优先按 takerFeeTokenId 精确匹配：同 tx 里 FeeRefunded.id === 该推荐人返佣对应的 tokenId 且 feeCharged>0，
+  // 取其 to 才是真正的被邀请人。撮合 tx 常含多笔 OrderFilled/FeeRefunded，仅取「第一条 feeCharged>0」会张冠李戴。
+  if(tokenIds && tokenIds.size){
+    for(const lg of logs){
+      if((lg.topics[0]||"").toLowerCase()!==T.FEE_REFUNDED) continue;
+      if(!(word(lg.data,2)>0n)) continue;                                    // feeCharged>0（退款后仍实收）
+      if(tokenIds.has(word(lg.data,0).toString())) return topicToAddr(lg.topics[2]); // id 命中
+    }
+  }
+  // 回退：无 tokenId 线索时取第一条 feeCharged>0 的 FeeRefunded
+  for(const lg of logs) if((lg.topics[0]||"").toLowerCase()===T.FEE_REFUNDED && word(lg.data,2)>0n) return topicToAddr(lg.topics[2]);
   return null;
 }
 
@@ -1321,7 +1332,8 @@ async function findReferrerScan(address, days, onProgress){
   const topics = [T.FEE_REFUNDED, null, padTopic(address)];
   const NEED = 6;
   const cands = [];
-  for(const mod of FEE_MODULES){
+  // topic-only（topic2=被返款钱包）扫描，不限定手续费合约地址，覆盖收益型/非收益型全部交易所
+  for(const mod of [null]){
     if(aborted || cands.length>=NEED) break;
     let size = Math.max(1, tip - fromBlock + 1), to = tip;
     while(to>=fromBlock && cands.length<NEED){
@@ -1352,18 +1364,25 @@ async function findInvitees(address, days, onProgress){
   const fromBlock = await blockFromTime(Math.floor(Date.now()/1000) - days*86400);
   const topics = [T.REFERRAL, padTopic(address)];
   const fast = !!(document.getElementById("refFast") && document.getElementById("refFast").checked);
-  let logs = []; let stopped=false;
-  for(const mod of FEE_MODULES){
-    if(aborted) break;
-    const opts = { backward:fast, emptyStop:2 };
-    logs.push(...await scanLogsRange(topics, fromBlock, tip, (d,t)=>onProgress && onProgress("扫描日志", d, t, logs.length), mod, opts));
-    if(opts.stopped) stopped=true;
+  const opts = { backward:fast, emptyStop:2 };
+  // 只按 topic 过滤（topic0=ReferralFeeDistributed, topic1=推荐人），不再限定手续费合约地址：
+  // EXCHANGES 有 4 个交易所（收益型 2 + 非收益型 2），而 FEE_MODULES 只列了收益型对应的 2 个手续费合约，
+  // 若只扫这两个，非收益型市场产生的返佣就永远扫不到 → 查下线返回空。topic1 已锁定具体推荐人，命中集很小。
+  const logs = await scanLogsRange(topics, fromBlock, tip,
+    (d,t,n)=>onProgress && onProgress("扫描日志", d, t, n), null, opts);
+  const stopped = !!opts.stopped;
+  // 每笔 tx 记录该推荐人对应的 takerFeeTokenId（indexed topic2），用于在 receipt 里精确匹配被邀请人
+  const txTokens = new Map();  // txLower -> Set(tokenIdDec)
+  for(const l of logs){
+    const tx = (l.transactionHash||"").toLowerCase(); if(!tx) continue;
+    let s = txTokens.get(tx); if(!s){ s = new Set(); txTokens.set(tx, s); }
+    s.add(bg(l.topics[2]||"0x0").toString());
   }
-  const txs = [...new Set(logs.map(l=>l.transactionHash.toLowerCase()))];
+  const txs = [...txTokens.keys()];
   const cap=400; const slice = txs.slice(0, cap);
   const invitees = new Map(); let done=0;
   await pMap(slice, async tx=>{
-    const u = inviteeFromReceipt(await getReceiptAny(tx));
+    const u = inviteeFromReceipt(await getReceiptAny(tx), txTokens.get(tx));
     if(u){ const cur = invitees.get(u)||{count:0}; cur.count++; invitees.set(u, cur); } // get/set 同步、无竞态
     done++; onProgress && onProgress("解析返佣", done, slice.length, invitees.size);
   }, RECEIPT_CONC);

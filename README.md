@@ -52,7 +52,7 @@
 
 「邀请关系 · Referral」卡片，链上解析（有 BSC API Key 走 API；否则自动用免费 **RPC 分块 `eth_getLogs`** 兜底，较慢）：
 - **查邀请人**：扫该钱包的 `FeeRefunded(to=wallet, feeCharged>0)`，取同 tx 的 `ReferralFeeDistributed.referrer`。
-- **查下线**：扫 `ReferralFeeDistributed(referrer=address)`，对每笔 tx 取 `FeeRefunded.to`（feeCharged>0）即被邀请用户，按返佣笔数排序。
+- **查下线**：按 topic 扫 `ReferralFeeDistributed(referrer=address)`（不限定手续费合约地址，覆盖收益型/非收益型全部交易所），对每笔 tx 用返佣事件的 `takerFeeTokenId` 精确匹配同 tx 里 `id` 相同且 `feeCharged>0` 的 `FeeRefunded`，取其 `to` 即被邀请用户，按返佣笔数排序。
 - 可调回溯天数；结果里地址可点开 portfolio、用户名可点查积分。
 - **持仓价值 / PNL** 这些字段常需登录态，若显示「—」，在 Vercel 设 `PREDICT_GRAPHQL_AUTH` 或 `PREDICT_GRAPHQL_COOKIE`（从浏览器登录 predict.fun 后的请求里复制）。
 
