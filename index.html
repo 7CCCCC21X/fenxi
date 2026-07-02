@@ -1061,23 +1061,58 @@ function isRpcRateLimited(status, json){
   const m = err ? String(err.message||"") : "";
   return /rate ?limit|limit exceeded|too many request|throttl|capacity|exceeded its/i.test(m);
 }
+// 主 RPC（服务端 key 或用户填的）被 401/403 拒绝（key 未开通本链/配额用尽/白名单）时，
+// 自动降级到公共节点，否则这些请求会被静默吞掉、交易缺 receipt。被拒目标记入会话级黑名单，不再重复撞墙。
+const PUBLIC_RPCS = ["https://bsc-dataseed.bnbchain.org", "https://bsc.publicnode.com", "https://1rpc.io/bnb"];
+const _rpcDenied = new Set();
+function isRpcKeyDenied(status, json){
+  if(status===401 || status===403) return true;
+  const err = json && json.error;
+  const m = err ? String(err.message||"") : "";
+  return /api key|not allowed to access|unauthori[sz]ed|forbidden/i.test(m);
+}
+function markRpcDenied(target){
+  if(_rpcDenied.has(target)) return;
+  _rpcDenied.add(target);
+  log(`RPC ${target==="/api/rpc"?"服务端代理":target} 拒绝请求（403/key 无权限），自动切换公共节点…`);
+}
+function rpcTargets(rpc){
+  const primary = rpcTarget(rpc || rpcUrlVal());
+  const list = [primary]; for(const u of PUBLIC_RPCS) if(u!==primary) list.push(u);
+  const alive = list.filter(u=>!_rpcDenied.has(u));
+  return alive.length ? alive : list; // 全被标记时仍按原序重试，避免无路可走
+}
 async function rpcFetch(body, rpc){
-  const target = rpcTarget(rpc || rpcUrlVal());
+  const targets = rpcTargets(rpc);
   return rpcLimit(async ()=>{
-    let delay = 600;
-    for(let attempt=0; ; attempt++){
-      if(aborted) throw new Error("已取消");
-      const { json, status, text } = await fetchJSON(target, {
-        method:"POST", headers:{"content-type":"application/json"},
-        body: JSON.stringify({ jsonrpc:"2.0", id:1, ...body })
-      });
-      if(isRpcRateLimited(status, json) && attempt<5){
-        await sleep(delay + Math.floor(Math.random()*250)); delay = Math.min(delay*2, 8000);
-        continue;
+    let lastErr = null;
+    for(const target of targets){
+      let delay = 600;
+      try{
+        for(let attempt=0; ; attempt++){
+          if(aborted) throw new Error("已取消");
+          const { json, status, text } = await fetchJSON(target, {
+            method:"POST", headers:{"content-type":"application/json"},
+            body: JSON.stringify({ jsonrpc:"2.0", id:1, ...body })
+          });
+          if(isRpcRateLimited(status, json) && attempt<5){
+            await sleep(delay + Math.floor(Math.random()*250)); delay = Math.min(delay*2, 8000);
+            continue;
+          }
+          if(isRpcKeyDenied(status, json)){
+            markRpcDenied(target);
+            lastErr = new Error("RPC 被拒（403/key 无权限）："+target);
+            break; // 换下一个节点
+          }
+          if(!json) throw new Error("RPC 无响应"+(text?("："+text.slice(0,80)):""));
+          return json;
+        }
+      }catch(e){
+        if(/已取消/.test(e && e.message || "")) throw e;
+        lastErr = e; // 网络/CORS/超时 → 换下一个节点
       }
-      if(!json) throw new Error("RPC 无响应"+(text?("："+text.slice(0,80)):""));
-      return json;
     }
+    throw lastErr || new Error("RPC 不可用");
   });
 }
 // 通用 RPC 调用
@@ -1229,7 +1264,6 @@ async function getReceiptsBatch(txs, onProgress){
     const r = await pMap(txs, async tx=>{ const x = await getReceiptAny(tx).catch(()=>null); tick(1); return x; }, RECEIPT_CONC);
     return r;
   }
-  const target = rpcTarget(rpcUrlVal());
   const CHUNK = 20;
   const chunks = [];
   for(let i=0;i<txs.length;i+=CHUNK) chunks.push([i, txs.slice(i,i+CHUNK)]);
@@ -1239,7 +1273,9 @@ async function getReceiptsBatch(txs, onProgress){
     const body = chunk.map((tx,i)=>({ jsonrpc:"2.0", id:i, method:"eth_getTransactionReceipt", params:[tx] }));
     try{
       const arr = await rpcLimit(async ()=>{
-        const { json } = await fetchJSON(target, { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(body) });
+        const target = rpcTargets()[0]; // 每块取当前可用目标：主 RPC 被 403 标记后，后续块直接走公共节点
+        const { json, status } = await fetchJSON(target, { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(body) });
+        if(isRpcKeyDenied(status, json)) markRpcDenied(target);
         return json;
       });
       if(Array.isArray(arr)){
