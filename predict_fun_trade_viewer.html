@@ -431,7 +431,7 @@
         <button id="refUp" class="secondary">查邀请人 ↑</button>
         <button id="refDown">查下线 ↓</button>
       </div>
-      <div class="hint" style="margin-top:6px">「查邀请人」= 谁邀请了这些钱包；「查下线」= 这些地址各自邀请了哪些用户。<b>支持批量</b>（多地址逐个处理）。链上解析：有 BSC API Key 走 API（快），否则自动 <b>RPC 扫描</b>（免费，较慢）。查过的邀请人会<b>缓存</b>，再查直接命中、不重复请求。</div>
+      <div class="hint" style="margin-top:6px">「查邀请人」= 谁邀请了这些钱包；「查下线」= 这些地址各自邀请了哪些用户。<b>支持批量</b>（多地址逐个处理）。「查邀请人」与交易表<b>同一套逻辑</b>：先走 Predict 官方接口<b>秒查</b>（权威），接口不可用才回退链上扫描（有 BSC API Key 走 API，否则 RPC）。查过的邀请人会<b>缓存</b>，再查直接命中、不重复请求。</div>
       <div id="refResult" style="margin-top:12px"></div>
       <div id="refHistWrap" style="margin-top:16px;display:none">
         <div class="row" style="align-items:center;gap:8px;margin-bottom:8px">
@@ -1354,13 +1354,18 @@ async function fetchOpinxTrades(address, days, maxPages){
   return all;
 }
 
-// 查某地址的邀请人：先查缓存；未命中再走 OPinX 交易记录 / 链上扫描，结果写回缓存。
-async function findReferrer(address, days, onProgress){
+// 查某地址的邀请人：先查缓存；未命中与交易表「对手方邀请人」同一套逻辑——
+// 先 GraphQL referredBy（秒查、权威，对纯 maker 也有效），不可达/无此字段才回退 OPinX / 链上扫描。
+// 直接扫链会在公共 RPC 上触发 -32005 limit exceeded，GraphQL 优先可绕开绝大多数扫描。
+async function findReferrer(address, days, onProgress, allowChain=true){
   const w = address.toLowerCase();
   const cached = refCacheGet(w);
   if(refCacheUsable(cached, days)){
     return cached.referrer ? { referrer:cached.referrer, tx:cached.tx||null, cached:true } : null;
   }
+  const rb = await resolveReferredBy(address);   // 命中/权威「无邀请人」都会在内部永久缓存
+  if(rb!==undefined) return rb ? { referrer:rb, tx:null } : null;
+  if(!allowChain) return null;
   const r = await findReferrerScan(address, days, onProgress);
   // 只持久化「命中」：链上「未找到」可能是回溯范围不足 / 限流 / 超时所致，不可靠；
   // 若缓存它，会把本可查到的地址永远显示为「未找到」。未找到只留会话内存，刷新后可重查。
@@ -1960,9 +1965,13 @@ async function doFindReferrer(){
       showProgress(box, `查邀请人中…（回溯 ${days} 天）`, 0, 0);
       const r = await findReferrer(addrs[0], days,
         (s,t)=> showProgress(box, "查邀请人中…", s, t));
+      // GraphQL 权威确认「无邀请人」时（缓存 days=1e9），不再提示加大天数
+      const authNone = (()=>{ const rec=refCacheGet(addrs[0]); return rec && !rec.referrer && (rec.days||0)>=1e9; })();
       box.innerHTML = r
         ? `<div>该钱包的邀请人：<b>${personHtml(r.referrer, (r.tx?` <a class="addr" href="https://bscscan.com/tx/${r.tx}" target="_blank">tx↗</a>`:"") + (r.cached?` <span class="hint">（缓存）</span>`:""))}</b></div>`
-        : `<div class="hint">未找到邀请人（最近 ${days} 天无邀请返佣，或邀请更早，请加大天数）。</div>`;
+        : (authNone
+          ? `<div class="hint">该钱包无邀请人（Predict 官方接口确认）。</div>`
+          : `<div class="hint">未找到邀请人（最近 ${days} 天无邀请返佣，或邀请更早，请加大天数）。</div>`);
       fillRefNames(box); return;
     }
     // 批量：并行查询，结果到一个填一个
@@ -2423,12 +2432,8 @@ async function autoResolveCpReferrers(runId, allowChain){
     try{
       // 每个地址整体限时，避免个别卡住一直占着并发槽
       ref = await Promise.race([
-        (async ()=>{
-          const rb = await resolveReferredBy(addr);                 // 先 GraphQL
-          if(rb!==undefined) return rb;
-          if(allowChain) return (await findReferrer(addr, days)||{}).referrer || null; // 回退链上扫描
-          return null;
-        })(),
+        // findReferrer 内部已统一「先 GraphQL referredBy，再链上扫描」
+        findReferrer(addr, days, null, allowChain).then(r=>(r||{}).referrer||null),
         new Promise(res=>setTimeout(()=>res("__timeout__"), 30000)),
       ]);
       if(ref==="__timeout__") ref = null;
