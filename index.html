@@ -1076,17 +1076,29 @@ function markRpcDenied(target){
   _rpcDenied.add(target);
   log(`RPC ${target==="/api/rpc"?"服务端代理":target} 拒绝请求（403/key 无权限），自动切换公共节点…`);
 }
+// 限流冷却：某节点限流重试用尽后，短时间内跳过它直接走其他节点。
+// 否则大范围分窗扫描时，每个窗口都要先在被限流的主节点上退避重试十几秒才切换，
+// 表现为「一直在请求却一直没数据」。
+const _rpcCooldown = new Map(); // target -> 恢复时间戳(ms)
+function markRpcCooldown(target, ms){
+  _rpcCooldown.set(target, Date.now()+ms);
+  log(`RPC ${target==="/api/rpc"?"服务端代理":target} 持续限流，${Math.round(ms/1000)} 秒内改走其他节点…`);
+}
 function rpcTargets(rpc){
   const primary = rpcTarget(rpc || rpcUrlVal());
   const list = [primary]; for(const u of PUBLIC_RPCS) if(u!==primary) list.push(u);
-  const alive = list.filter(u=>!_rpcDenied.has(u));
+  const now = Date.now();
+  const alive = list.filter(u=>!_rpcDenied.has(u) && (_rpcCooldown.get(u)||0)<=now);
   return alive.length ? alive : list; // 全被标记时仍按原序重试，避免无路可走
 }
 async function rpcFetch(body, rpc){
   const targets = rpcTargets(rpc);
   return rpcLimit(async ()=>{
     let lastErr = null;
-    for(const target of targets){
+    for(let ti=0; ti<targets.length; ti++){
+      const target = targets[ti];
+      // 还有备用节点时只重试 2 次就切换（快速失败），最后一个节点才多退避几轮
+      const maxAttempts = ti<targets.length-1 ? 2 : 5;
       let delay = 600;
       try{
         for(let attempt=0; ; attempt++){
@@ -1095,9 +1107,15 @@ async function rpcFetch(body, rpc){
             method:"POST", headers:{"content-type":"application/json"},
             body: JSON.stringify({ jsonrpc:"2.0", id:1, ...body })
           });
-          if(isRpcRateLimited(status, json) && attempt<5){
-            await sleep(delay + Math.floor(Math.random()*250)); delay = Math.min(delay*2, 8000);
-            continue;
+          if(isRpcRateLimited(status, json)){
+            if(attempt<maxAttempts){
+              await sleep(delay + Math.floor(Math.random()*250)); delay = Math.min(delay*2, 8000);
+              continue;
+            }
+            // 重试用尽仍被限流 → 该节点冷却 60 秒（后续请求直接走其他节点），换下一个节点
+            markRpcCooldown(target, 60000);
+            lastErr = Object.assign(new Error("RPC 限流（limit exceeded）："+target), { rateLimited:true });
+            break;
           }
           if(isRpcKeyDenied(status, json)){
             markRpcDenied(target);
@@ -1118,10 +1136,16 @@ async function rpcFetch(body, rpc){
 // 通用 RPC 调用
 async function rpcCall(method, params){
   const json = await rpcFetch({ method, params });
-  if(json.error) throw new Error("RPC: "+(json.error.message||JSON.stringify(json.error)));
+  if(json.error){
+    const e = new Error("RPC: "+(json.error.message||JSON.stringify(json.error)));
+    e.rateLimited = isRpcRateLimited(0, json); // 标记限流错误，避免被 isRangeErr 误判成区间过大
+    throw e;
+  }
   return json.result;
 }
-const isRangeErr = e => /limit|range|too many|exceed|10000|result set|more than|block range|query returned/i.test(e.message||"");
+// 区间过大（需要缩小窗口重试）。注意：限流错误（-32005 limit exceeded）的文案也含 limit/exceed，
+// 若误判为区间错误会把窗口对半切、发出更多请求，令限流雪上加霜 → 用 rateLimited 标记排除。
+const isRangeErr = e => !(e && e.rateLimited) && /limit|range|too many|exceed|10000|result set|more than|block range|query returned/i.test(e.message||"");
 let _bscApiUsable = null; // null=未知, true/false
 
 // 取最新区块高度（优先 BSC API，失败回退 RPC）
@@ -1273,10 +1297,24 @@ async function getReceiptsBatch(txs, onProgress){
     const body = chunk.map((tx,i)=>({ jsonrpc:"2.0", id:i, method:"eth_getTransactionReceipt", params:[tx] }));
     try{
       const arr = await rpcLimit(async ()=>{
-        const target = rpcTargets()[0]; // 每块取当前可用目标：主 RPC 被 403 标记后，后续块直接走公共节点
-        const { json, status } = await fetchJSON(target, { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(body) });
-        if(isRpcKeyDenied(status, json)) markRpcDenied(target);
-        return json;
+        // 逐目标尝试：主 RPC 被 403 标记后走公共节点；限流则退避重试再换节点，
+        // 避免整批直接掉进逐个回退（1 次批量变 20 次单发，放大限流）。
+        for(const target of rpcTargets()){
+          let delay = 600, limited = false;
+          for(let attempt=0; attempt<3; attempt++){
+            if(aborted) return null;
+            const { json, status } = await fetchJSON(target, { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(body) });
+            if(isRpcKeyDenied(status, json)){ markRpcDenied(target); break; } // 换下一个节点
+            if(!Array.isArray(json) && isRpcRateLimited(status, json)){
+              limited = true;
+              await sleep(delay + Math.floor(Math.random()*250)); delay = Math.min(delay*2, 4000);
+              continue;
+            }
+            return json;
+          }
+          if(limited) markRpcCooldown(target, 60000); // 重试用尽仍限流 → 冷却，后续请求直奔其他节点
+        }
+        return null;
       });
       if(Array.isArray(arr)){
         const byId = new Map(arr.map(r=>[r && r.id, r]));
